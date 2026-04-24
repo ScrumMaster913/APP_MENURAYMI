@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Página de productos — Inti Raymi</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="css/admin.css" />
+  </head>
+  <body class="admin-body">
+    <div class="admin-layout">
+      <aside class="admin-sidebar" aria-label="Menú lateral">
+        <div class="admin-sidebar__logo">Menú digital</div>
+        <nav class="admin-sidebar__nav">
+          <span class="admin-sidebar__item admin-sidebar__item--disabled">Pedidos PDV</span>
+          <span class="admin-sidebar__item admin-sidebar__item--disabled">Ventas</span>
+          <div class="admin-sidebar__group">
+            <span class="admin-sidebar__group-title">Menú</span>
+            <a href="admin.html" class="admin-sidebar__link is-active" id="nav-admin-products">Página de productos</a>
+            <a href="admin.html" class="admin-sidebar__link" id="nav-admin-modifiers">Modificadores</a>
+            <a href="index.html" class="admin-sidebar__link">Página de bienvenida</a>
+            <span class="admin-sidebar__link admin-sidebar__link--muted">Configuración de pedidos</span>
+          </div>
+          <span class="admin-sidebar__item admin-sidebar__item--disabled">Cocina</span>
+          <span class="admin-sidebar__item admin-sidebar__item--disabled">Inventario</span>
+          <span class="admin-sidebar__item admin-sidebar__item--disabled">Chatbot</span>
+          <span class="admin-sidebar__item admin-sidebar__item--disabled">Clientes</span>
+          <span class="admin-sidebar__item admin-sidebar__item--disabled">Marketing</span>
+          <span class="admin-sidebar__item admin-sidebar__item--disabled">Configuraciones</span>
+        </nav>
+        <div class="admin-sidebar__footer">
+          <a href="products.html" class="admin-sidebar__footer-btn">Vista previa</a>
+          <span class="admin-sidebar__footer-btn admin-sidebar__footer-btn--ghost">QR y enlaces</span>
+        </div>
+      </aside>
+
+      <div class="admin-workspace">
+        <header class="admin-hero" aria-label="Cabecera del restaurante">
+          <div class="admin-hero__cover" aria-hidden="true"></div>
+          <div class="admin-hero__row">
+            <div class="admin-hero__identity">
+              <img
+                class="admin-hero__avatar"
+                src="https://d2nagnwby8accc.cloudfront.net/companies/logos/thumbnails/8df7b0fd-1d49-4b22-ba41-15b522aa5166.webp"
+                width="72"
+                height="72"
+                alt=""
+              />
+              <div class="admin-hero__titles">
+                <h1 class="admin-hero__name">Inti Raymi Restaurante</h1>
+                <p class="admin-hero__crumb" id="admin-hero-crumb">Menú / Página de productos</p>
+              </div>
+            </div>
+            <div class="admin-hero__actions">
+              <label class="admin-currency-pill">
+                <span class="admin-currency-pill__label">Moneda</span>
+                <input type="text" id="currency-symbol" maxlength="4" class="admin-currency-pill__input" />
+              </label>
+              <button type="button" class="admin-toolbar-btn admin-toolbar-btn--ghost" id="btn-reload" title="Recargar desde disco">
+                Recargar
+              </button>
+              <button type="button" class="admin-toolbar-btn admin-toolbar-btn--ghost" id="btn-download">Descargar JSON</button>
+              <button type="button" class="admin-toolbar-btn admin-toolbar-btn--save" id="btn-save">Guardar</button>
+            </div>
+          </div>
+        </header>
+
+        <div class="admin-sticky-tools" id="admin-sticky-tools">
+          <div class="admin-chips-scroll" id="admin-category-chips" role="tablist" aria-label="Categorías"></div>
+          <div class="admin-tools-right">
+            <span class="admin-search-wrap" role="search">
+              <span class="admin-search-icon" aria-hidden="true">⌕</span>
+              <input type="search" id="menu-filter" class="admin-search-input" placeholder="Buscar platos…" autocomplete="off" />
+            </span>
+          </div>
+        </div>
+
+        <div id="admin-banner" class="admin-banner" role="status" hidden></div>
+
+        <div id="admin-view-products">
+          <p class="admin-hint">
+            Edición local de <code>data/menu.json</code>. La vista pública está en
+            <a href="products.html">products.html</a>. Guardar requiere PHP en Apache; si no, usa «Descargar JSON».
+          </p>
+          <div id="admin-root">
+            <p class="admin-loading">Cargando menú…</p>
+          </div>
+        </div>
+
+        <div id="admin-view-modifiers" class="admin-view-modifiers" hidden>
+          <p class="admin-hint">
+            Categorías reutilizables: asígnalas a cada producto desde «Editar» en la página de productos. Se guardan en
+            <code>data/menu.json</code> como <code>modifierLibrary</code> y <code>modifierIds</code> por producto.
+          </p>
+          <div class="mod-lib-toolbar">
+            <div class="mod-lib-toolbar__left">
+              <span class="mod-lib-toolbar__label">Categorías de modificadores</span>
+              <span class="mod-lib-count" id="mod-lib-count">0</span>
+            </div>
+            <span class="admin-search-wrap mod-lib-search" role="search">
+              <span class="admin-search-icon" aria-hidden="true">⌕</span>
+              <input
+                type="search"
+                id="mod-lib-filter"
+                class="admin-search-input"
+                placeholder="Buscar categoría"
+                autocomplete="off"
+              />
+            </span>
+            <button type="button" class="admin-toolbar-btn admin-toolbar-btn--save" id="btn-mod-lib-create">
+              + Crear categoría
+            </button>
+          </div>
+          <div id="admin-modifiers-root"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="drawer-backdrop" class="olc-drawer-backdrop" hidden aria-hidden="true"></div>
+    <aside
+      id="product-drawer"
+      class="olc-drawer"
+      hidden
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="drawer-prod-heading"
+    >
+      <div class="olc-drawer__head">
+        <h2 id="drawer-prod-heading" class="olc-drawer__title">Editar producto</h2>
+        <div class="olc-drawer__head-actions">
+          <button type="button" class="olc-drawer__icon" id="drawer-btn-star" aria-label="Destacado (decorativo)">
+            ★
+          </button>
+          <button type="button" class="olc-drawer__icon" id="drawer-btn-close" aria-label="Cerrar">×</button>
+        </div>
+      </div>
+      <div class="olc-drawer__scroll" id="product-drawer-inner"></div>
+    </aside>
+
+    <script src="js/admin.js" defer></script>
+  </body>
+</html>

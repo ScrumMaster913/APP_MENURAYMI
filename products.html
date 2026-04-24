@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Menú digital de Inti Raymi Restaurante — Calama, Chile. Consulta precios y arma tu pedido."
+    />
+    <title>Inti Raymi Restaurante — Menú digital</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="css/landing.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="header-inner">
+        <a href="index.html" aria-label="Inicio Inti Raymi">
+          <img
+            class="brand-logo brand-logo--mobile"
+            src="https://d2nagnwby8accc.cloudfront.net/companies/logos/thumbnails/8df7b0fd-1d49-4b22-ba41-15b522aa5166.webp"
+            width="64"
+            height="64"
+            alt="Logo Inti Raymi Restaurante"
+          />
+        </a>
+        <div class="header-actions">
+          <div id="status-pill" class="status-pill" data-open="false" role="status" aria-live="polite">
+            <span class="status-dot" aria-hidden="true">●</span>
+            <span data-status-label>Cerrado</span>
+          </div>
+          <a class="btn btn--outline" href="admin.html">Admin menú</a>
+          <a class="btn btn--primary" href="index.html">Inicio</a>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <div class="menu-cover" role="img" aria-label="Imagen de portada del restaurante"></div>
+
+      <div class="menu-page-inner">
+        <div class="menu-identity">
+          <a href="index.html" class="menu-identity__logo-wrap" aria-label="Inicio">
+            <img
+              class="menu-identity__logo"
+              src="https://d2nagnwby8accc.cloudfront.net/companies/logos/thumbnails/8df7b0fd-1d49-4b22-ba41-15b522aa5166.webp"
+              width="96"
+              height="96"
+              alt=""
+            />
+          </a>
+          <div class="menu-identity__text">
+            <h1 class="menu-identity__title">Inti Raymi Restaurante</h1>
+            <a
+              class="address-link menu-identity__address"
+              href="https://www.google.com/maps/search/?api=1&amp;query=-22.4590882,-68.9268891"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path
+                  d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5A2.5 2.5 0 1 1 12 6a2.5 2.5 0 0 1 0 5.5z"
+                />
+              </svg>
+              <span>Antofagasta 2088, 1390714 Calama, Antofagasta, Chile</span>
+            </a>
+            <p class="menu-identity__hint">
+              La carta se carga desde <code>data/menu.json</code>. Edita ese archivo para actualizar platos y precios.
+            </p>
+          </div>
+        </div>
+
+        <div class="menu-toolbar">
+          <label class="menu-search-label" for="menu-search">Buscar en el menú</label>
+          <input
+            id="menu-search"
+            class="menu-search"
+            type="search"
+            autocomplete="off"
+            placeholder="Ej. lomo, bebida…"
+          />
+        </div>
+
+        <nav id="menu-category-nav" class="menu-category-nav" aria-label="Categorías"></nav>
+
+        <p id="menu-error" class="menu-error" hidden></p>
+        <p id="menu-empty" class="menu-empty" hidden>No hay resultados para tu búsqueda.</p>
+
+        <div id="menu-root"></div>
+      </div>
+    </main>
+
+    <div id="order-bar" class="order-bar" hidden>
+      <div class="order-bar__inner">
+        <div class="order-bar__summary" aria-live="polite">
+          <span id="order-summary-line" class="order-bar__count-line">0 productos</span>
+          <span id="order-total" class="order-bar__total-line">$0</span>
+        </div>
+        <button type="button" id="order-open" class="order-bar__cta">Ver mi pedido</button>
+      </div>
+    </div>
+
+    <div id="overlay-backdrop" class="overlay-backdrop" hidden aria-hidden="true"></div>
+
+    <aside
+      id="product-modal"
+      class="overlay-sheet"
+      hidden
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="product-modal-title"
+    >
+      <div class="overlay-sheet__head">
+        <h2 id="product-modal-title" class="overlay-sheet__title">Producto</h2>
+        <button type="button" class="overlay-sheet__close" id="product-modal-close" aria-label="Cerrar">×</button>
+      </div>
+      <div id="product-modal-body" class="overlay-sheet__body"></div>
+      <div class="overlay-sheet__foot overlay-sheet__foot--product">
+        <p id="product-modal-oos-banner" class="prod-modal-oos-banner" hidden>Productos agotados</p>
+        <div class="prod-modal-foot-row">
+          <div class="prod-modal-qty" id="product-modal-qty-wrap">
+            <button type="button" class="prod-modal-qty__btn" id="product-qty-minus" aria-label="Menos cantidad">
+              −
+            </button>
+            <span class="prod-modal-qty__val" id="product-qty-value" aria-live="polite">1</span>
+            <button type="button" class="prod-modal-qty__btn" id="product-qty-plus" aria-label="Más cantidad">
+              +
+            </button>
+          </div>
+          <button type="button" id="product-add" class="btn btn--primary overlay-sheet__cta prod-modal-add-btn">
+            Agregar
+          </button>
+        </div>
+      </div>
+    </aside>
+
+    <aside
+      id="checkout-modal"
+      class="overlay-sheet"
+      hidden
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="checkout-modal-title"
+    >
+      <div id="checkout-head-order" class="overlay-sheet__head checkout-head-order">
+        <h2 id="checkout-modal-title" class="overlay-sheet__title">Tu pedido</h2>
+        <button type="button" class="overlay-sheet__close" id="checkout-modal-close" aria-label="Cerrar">×</button>
+      </div>
+      <div id="checkout-head-delivery" class="overlay-sheet__head checkout-head-delivery" hidden>
+        <button type="button" class="delivery-contact-back" id="checkout-delivery-back" aria-label="Volver al pedido">
+          <span aria-hidden="true">←</span>
+        </button>
+        <h2 id="checkout-delivery-title" class="overlay-sheet__title checkout-delivery-head-title">
+          Agrega tu nombre y teléfono
+        </h2>
+        <button type="button" class="overlay-sheet__close" id="checkout-modal-close-delivery" aria-label="Cerrar">
+          ×
+        </button>
+      </div>
+      <div id="checkout-modal-body" class="overlay-sheet__body"></div>
+    </aside>
+
+    <footer class="site-footer">
+      <div class="footer-inner">
+        <nav class="footer-links" aria-label="Enlaces pie de página">
+          <a href="index.html">Inicio</a>
+          <a href="info.html">Tipos de servicio y horarios</a>
+          <button type="button">Reportar algo</button>
+        </nav>
+      </div>
+    </footer>
+
+    <script src="js/landing.js" defer></script>
+    <script src="js/products.js" defer></script>
+  </body>
+</html>

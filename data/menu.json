@@ -1,0 +1,178 @@
+{
+    "currencySymbol": "$",
+    "categories": [
+        {
+            "id": "destacados",
+            "name": "Destacados",
+            "products": [
+                {
+                    "id": "dest-jugo-natural-12",
+                    "name": "Jugo natural 1\/22",
+                    "price": 3500,
+                    "status": "hidden",
+                    "modifiers": [
+                        {
+                            "id": "mod-moaoqtei",
+                            "name": "Nuevo grupo",
+                            "optional": true,
+                            "multiSelect": true,
+                            "minSelect": 0,
+                            "maxSelect": 0,
+                            "options": [
+                                {
+                                    "id": "opt-mobrhkwa98zn",
+                                    "name": "Opción 1",
+                                    "price": 0,
+                                    "maxQty": 99
+                                }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "id": "dest-flan",
+                    "name": "Flan",
+                    "price": 1500
+                },
+                {
+                    "id": "dest-mote-huesillo",
+                    "name": "Mote con huesillo",
+                    "price": 1800
+                },
+                {
+                    "id": "dest-pescado-frito",
+                    "name": "Pescado frito",
+                    "price": 4500
+                },
+                {
+                    "id": "dest-chaufa-mixto",
+                    "name": "Chaufa Mixto con verduras",
+                    "price": 4500,
+                    "description": "Arroz salteado con verduras y proteínas a elección."
+                },
+                {
+                    "id": "dest-carne-olla",
+                    "name": "Carne a la Olla",
+                    "price": 4500,
+                    "modifierIds": [
+                        "mod-mobnku3e"
+                    ]
+                },
+                {
+                    "id": "dest-papa-rellena",
+                    "name": "Papa rellena",
+                    "price": 4500,
+                    "pricingMode": "variants",
+                    "variants": [
+                        {
+                            "name": "Para mesa",
+                            "price": 4500
+                        },
+                        {
+                            "name": "Para llevar",
+                            "price": 4500
+                        }
+                    ],
+                    "stockEnabled": true,
+                    "stock": 5,
+                    "minStock": 1,
+                    "modifierIds": [
+                        "mod-mobnku3e"
+                    ]
+                }
+            ],
+            "layout": "row"
+        },
+        {
+            "id": "fondos-colacion",
+            "name": "Fondos de colación",
+            "products": [
+                {
+                    "id": "fc-carne-olla",
+                    "name": "Carne a la Olla",
+                    "price": 4500,
+                    "pricingMode": "variants",
+                    "variants": [
+                        {
+                            "name": "Para mesa",
+                            "price": 4500
+                        },
+                        {
+                            "name": "Para llevar",
+                            "price": 5000
+                        }
+                    ],
+                    "modifierIds": [
+                        "mod-mobnku3e"
+                    ]
+                },
+                {
+                    "id": "fc-chaufa-mixto",
+                    "name": "Chaufa Mixto con verduras",
+                    "price": 4500,
+                    "description": "Arroz salteado con verduras y proteínas a elección."
+                },
+                {
+                    "id": "fc-papa-rellena",
+                    "name": "Papa rellena",
+                    "price": 4500
+                },
+                {
+                    "id": "fc-pollo-jugo",
+                    "name": "Pollo al Jugo",
+                    "price": 4500,
+                    "modifierIds": [
+                        "mod-mobnku3e"
+                    ]
+                }
+            ]
+        },
+        {
+            "id": "nueva-mobq8u2j",
+            "name": "Extras",
+            "products": [
+                {
+                    "id": "plato-mobq9h0a",
+                    "name": "pollossss",
+                    "price": 3000
+                }
+            ]
+        }
+    ],
+    "modifierLibrary": [
+        {
+            "id": "mod-mobnku3e",
+            "name": "elige tus agregados",
+            "optional": false,
+            "multiSelect": true,
+            "minSelect": 1,
+            "maxSelect": 2,
+            "options": [
+                {
+                    "id": "opt-arroz",
+                    "name": "arroz",
+                    "price": 0,
+                    "maxQty": 2
+                },
+                {
+                    "id": "opt-papa-mayo",
+                    "name": "papa mayo",
+                    "price": 1000,
+                    "maxQty": 1
+                },
+                {
+                    "id": "opt-mobrj07e7z9m",
+                    "name": "dfgdfgdf",
+                    "price": 0,
+                    "maxQty": 1
+                },
+                {
+                    "id": "opt-mobrj2aa67e4",
+                    "name": "dgdfgdf",
+                    "price": 0,
+                    "maxQty": 1
+                }
+            ]
+        }
+    ]
+}
