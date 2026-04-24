@@ -1,12 +1,98 @@
 (function () {
   const CART_KEY = "intiRaymiCart:v1";
-  /** WhatsApp del restaurante (solo dígitos, sin +) — mismo número que en index.html. */
-  const RESTAURANT_WA_DIGITS = "56552741723";
+  const OLC_TRACKING_HANDOFF_KEY = "olc_tracking_handoff:v1";
+  const SERVICE_PICKUP_LABEL = "Recojo en local";
+  const SERVICE_DELIVERY_LABEL = "A domicilio";
+  const SERVICE_HOSPITAL_HCC_LABEL = "Hospital HCC";
+  const HOSPITAL_HCC_ADDRESS_ID = "olc-hospital-hcc-fixed";
+  /** Menú público: MySQL vía api/menu.php si hay config; si no, api/menu.php sirve data/menu.json. */
+  const MENU_DATA_URL = "api/menu.php";
   let menuModifierLibrary = [];
+  /** Desde api/menu.php (MySQL o JSON) — métodos de pago e instrucciones del checkout. */
+  let checkoutPaymentFromMenu = null;
+
+  const LEGACY_PAYMENT_LABEL_TO_ID = {
+    Efectivo: "efectivo",
+    "Pago Online": "pago_online",
+    Transferencia: "transferencia",
+    "Pluxee (Sodexo)": "pluxee_sodexo",
+    "Ticket Restaurant (Edenred)": "ticket_edenred",
+    Tarjeta: "tarjeta",
+  };
+
+  const CHECKOUT_PAY_CATALOG = [
+    { id: "efectivo", label: "Efectivo" },
+    { id: "pago_online", label: "Pago Online" },
+    { id: "transferencia", label: "Transferencia" },
+    { id: "pluxee_sodexo", label: "Pluxee (Sodexo)" },
+    { id: "ticket_edenred", label: "Ticket Restaurant (Edenred)" },
+    { id: "tarjeta", label: "Tarjeta" },
+  ];
+
+  function normalizeCheckoutPaymentFromMenu(raw) {
+    const src = raw && typeof raw === "object" && Array.isArray(raw.methods) ? raw.methods : [];
+    const byId = Object.create(null);
+    src.forEach(function (row) {
+      if (row && row.id) byId[row.id] = row;
+    });
+    const legacyGlobal =
+      raw && typeof raw.instructions === "string" ? String(raw.instructions).trim().slice(0, 800) : "";
+    const methods = CHECKOUT_PAY_CATALOG.map(function (def) {
+      const s = byId[def.id];
+      const enabled = s && s.enabled === false ? false : true;
+      const lab =
+        s && s.label && String(s.label).trim()
+          ? String(s.label).trim().slice(0, 80)
+          : def.label;
+      let per = s && typeof s.instructions === "string" ? String(s.instructions).slice(0, 800) : "";
+      if (def.id === "efectivo" && !per && legacyGlobal) {
+        per = legacyGlobal;
+      }
+      return { id: def.id, label: lab, enabled: enabled, instructions: per };
+    });
+    return { methods: methods };
+  }
+
+  function getResolvedCheckoutPayment() {
+    return checkoutPaymentFromMenu || normalizeCheckoutPaymentFromMenu(null);
+  }
+
+  function paymentInstructionsById(id) {
+    const cfg = getResolvedCheckoutPayment();
+    const m = cfg.methods.find(function (x) {
+      return x.id === id;
+    });
+    if (!m || !m.instructions) return "";
+    return String(m.instructions).trim();
+  }
+
+  function getEnabledPaymentMethodsList() {
+    const list = getResolvedCheckoutPayment().methods.filter(function (m) {
+      return m.enabled;
+    });
+    if (list.length) return list;
+    return [{ id: "efectivo", label: "Efectivo", enabled: true }];
+  }
+
+  function paymentLabelById(id) {
+    const cfg = getResolvedCheckoutPayment();
+    const m = cfg.methods.find(function (x) {
+      return x.id === id;
+    });
+    return m ? m.label : String(id || "efectivo");
+  }
+
+  function isCashPaymentMethodId(id) {
+    return String(id || "") === "efectivo";
+  }
+
   /** Paso datos domicilio dentro del mismo modal de checkout (no popup aparte). */
   let checkoutDeliveryStep = false;
   /** Dentro del paso domicilio: contacto → lista de direcciones → formulario nueva dirección. */
   let checkoutDeliverySubstep = "contact";
+  /** Flujo recojo en local: contacto → revisión (sin dirección). */
+  let checkoutPickupStep = false;
+  let checkoutPickupSubstep = "contact";
 
   function cloneModifierGroup(g) {
     return JSON.parse(JSON.stringify(g));
@@ -242,6 +328,16 @@
     if (!data || typeof data !== "object") return { items: [], serviceType: "" };
     if (!Array.isArray(data.items)) data.items = [];
     if (typeof data.serviceType !== "string") data.serviceType = "";
+    if (typeof data.serviceType === "string" && data.serviceType.trim()) {
+      const st0 = data.serviceType.trim();
+      const leg = st0
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "");
+      if (leg.indexOf("para llevar") !== -1 || st0 === "Para llevar") {
+        data.serviceType = SERVICE_PICKUP_LABEL;
+      }
+    }
     if (typeof data.deliveryName !== "string") data.deliveryName = "";
     if (typeof data.deliveryPhone !== "string") data.deliveryPhone = "";
     if (!Array.isArray(data.deliveryAddresses)) data.deliveryAddresses = [];
@@ -256,8 +352,26 @@
     if (typeof data.deliveryOrderComment !== "string") data.deliveryOrderComment = "";
     if (typeof data.deliveryCoupon !== "string") data.deliveryCoupon = "";
     if (typeof data.deliveryPaymentMethod !== "string") data.deliveryPaymentMethod = "";
-    const payOpts = ["Efectivo", "Pago Online", "Transferencia"];
-    if (!payOpts.includes(data.deliveryPaymentMethod)) data.deliveryPaymentMethod = "Efectivo";
+    const allowed = getEnabledPaymentMethodsList().map(function (m) {
+      return m.id;
+    });
+    let pm = String(data.deliveryPaymentMethod || "").trim();
+    const mapped = LEGACY_PAYMENT_LABEL_TO_ID[pm];
+    if (mapped) pm = mapped;
+    if (!allowed.includes(pm)) {
+      pm = allowed[0] || "efectivo";
+    }
+    data.deliveryPaymentMethod = pm;
+    if (!isCashPaymentMethodId(data.deliveryPaymentMethod)) {
+      data.deliveryCashTender = null;
+    }
+    const tenderRaw = data.deliveryCashTender;
+    if (tenderRaw == null || tenderRaw === "") {
+      data.deliveryCashTender = null;
+    } else {
+      const tn = Math.round(Number(tenderRaw));
+      data.deliveryCashTender = isFinite(tn) && tn >= 0 ? tn : null;
+    }
     return data;
   }
 
@@ -267,7 +381,13 @@
 
   function buildDeliveryOrderMessage(cart) {
     const lines = [];
-    lines.push("Hola, pedido a domicilio desde el menú digital:");
+    if (isPickupLocalCart(cart)) {
+      lines.push("Hola, pedido para recoger en local desde el menú digital:");
+    } else if (isHospitalHccCart(cart)) {
+      lines.push("Hola, pedido Hospital HCC desde el menú digital:");
+    } else {
+      lines.push("Hola, pedido a domicilio desde el menú digital:");
+    }
     lines.push("");
     (cart.items || []).forEach(function (it, i) {
       const nm =
@@ -291,10 +411,31 @@
     lines.push("");
     lines.push("Nombre: " + (cart.deliveryName || ""));
     lines.push("Tel: " + (cart.deliveryPhone || ""));
-    const addr = getSelectedDeliveryAddress(cart);
-    lines.push("Dirección: " + (addr ? formatDeliveryAddressLabel(addr) : "—"));
-    if (addr && addr.reference) lines.push("Referencia entrega: " + addr.reference);
-    lines.push("Pago: " + (cart.deliveryPaymentMethod || "Efectivo"));
+    if (isPickupLocalCart(cart)) {
+      lines.push("Retiro: recojo en el local del restaurante.");
+    } else if (isHospitalHccCart(cart)) {
+      lines.push("Entrega fija (Hospital HCC): Hospital Carlos Cisternas, Calama, Chile.");
+    } else {
+      const addr = getSelectedDeliveryAddress(cart);
+      lines.push("Dirección: " + (addr ? formatDeliveryAddressLabel(addr) : "—"));
+      if (addr && addr.reference) lines.push("Referencia entrega: " + addr.reference);
+    }
+    lines.push("Pago: " + paymentLabelById(cart.deliveryPaymentMethod || "efectivo"));
+    if (isCashPaymentMethodId(cart.deliveryPaymentMethod) && cart.deliveryCashTender != null) {
+      const tender = Math.round(Number(cart.deliveryCashTender));
+      if (isFinite(tender) && tender >= 0) {
+        lines.push("Paga con: " + formatCLP(tender));
+        lines.push("Vuelto: " + formatCLP(Math.max(0, tender - cartTotal(cart))));
+      }
+    }
+    const payNote = paymentInstructionsById(cart.deliveryPaymentMethod || "efectivo");
+    if (payNote) {
+      lines.push("Indicaciones de pago:");
+      payNote.split(/\r?\n/).forEach(function (ln) {
+        const t = ln.trim();
+        if (t) lines.push("  · " + t);
+      });
+    }
     if (String(cart.deliveryCoupon || "").trim()) lines.push("Cupón: " + String(cart.deliveryCoupon).trim());
     if (String(cart.deliveryOrderComment || "").trim()) {
       lines.push("Comentario: " + String(cart.deliveryOrderComment).trim());
@@ -302,11 +443,85 @@
     return lines.join("\n");
   }
 
-  function openWhatsappWithOrder(cart) {
-    const msg = buildDeliveryOrderMessage(cart);
-    const url = "https://wa.me/" + RESTAURANT_WA_DIGITS + "?text=" + encodeURIComponent(msg);
-    window.open(url, "_blank", "noopener,noreferrer");
-    closeAllOverlays();
+  function resetCartAfterOrderComplete() {
+    saveCart({
+      items: [],
+      serviceType: "",
+      deliveryName: "",
+      deliveryPhone: "",
+      deliveryAddresses: [],
+      deliveryAddressId: "",
+      deliveryOrderComment: "",
+      deliveryCoupon: "",
+      deliveryPaymentMethod: "",
+      deliveryCashTender: null,
+    });
+    updateOrderBar(loadCart());
+  }
+
+  function goToTrackingAfterOrder(cart, resBody) {
+    resBody = resBody || {};
+    const orderMessage = buildDeliveryOrderMessage(cart);
+    const publicId =
+      resBody.skipped || resBody.publicId == null || String(resBody.publicId).trim() === ""
+        ? null
+        : String(resBody.publicId).trim();
+    const handoff = {
+      orderMessage: orderMessage,
+      publicId: publicId,
+      ts: Date.now(),
+      totalClp: cartTotal(cart),
+      itemCount: cartCount(cart),
+    };
+    try {
+      sessionStorage.setItem(OLC_TRACKING_HANDOFF_KEY, JSON.stringify(handoff));
+    } catch (e) {}
+    resetCartAfterOrderComplete();
+    const urlParam = publicId && /^[a-f0-9]{12}$/i.test(publicId) ? publicId : "pending";
+    window.location.href = "tracking.html?order_id=" + encodeURIComponent(urlParam);
+  }
+
+  function persistConfirmedDeliveryOrder(cart, orderTotal) {
+    const addr = getSelectedDeliveryAddress(cart);
+    const payload = {
+      serviceType: String(cart.serviceType || "A domicilio"),
+      items: cart.items || [],
+      total: orderTotal,
+      deliveryName: cart.deliveryName || "",
+      deliveryPhone: cart.deliveryPhone || "",
+      deliveryAddress: addr
+        ? {
+            id: addr.id,
+            street: addr.street,
+            number: addr.number,
+            complement: addr.complement,
+            reference: addr.reference,
+          }
+        : null,
+      deliveryAddressLabel: addr ? formatDeliveryAddressLabel(addr) : "",
+      customerComment: cart.deliveryOrderComment || "",
+      coupon: cart.deliveryCoupon || "",
+      paymentMethodSlug: cart.deliveryPaymentMethod || "",
+      paymentMethodLabel: paymentLabelById(cart.deliveryPaymentMethod || "efectivo"),
+      cashTender:
+        isCashPaymentMethodId(cart.deliveryPaymentMethod) && cart.deliveryCashTender != null
+          ? cart.deliveryCashTender
+          : null,
+      changeCl:
+        isCashPaymentMethodId(cart.deliveryPaymentMethod) && cart.deliveryCashTender != null
+          ? Math.max(0, cart.deliveryCashTender - orderTotal)
+          : null,
+      orderMessage: buildDeliveryOrderMessage(cart),
+    };
+    return fetch("api/create-order.php", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }).then(function (r) {
+      return r.json().then(function (body) {
+        return { ok: r.ok, status: r.status, body: body };
+      });
+    });
   }
 
   function isDeliveryCart(cart) {
@@ -316,6 +531,42 @@
       .normalize("NFD")
       .replace(/[\u0300-\u036f]/g, "");
     return t.indexOf("domicilio") !== -1;
+  }
+
+  function isPickupLocalCart(cart) {
+    const raw = String((cart && cart.serviceType) || "");
+    const t = raw
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "");
+    return t.indexOf("recojo") !== -1;
+  }
+
+  function isHospitalHccCart(cart) {
+    const raw = String((cart && cart.serviceType) || "");
+    const t = raw
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "");
+    return t.indexOf("hospital") !== -1 && t.indexOf("hcc") !== -1;
+  }
+
+  function hospitalHccAddressTemplate() {
+    return {
+      id: HOSPITAL_HCC_ADDRESS_ID,
+      street: "Hospital Carlos Cisternas",
+      number: "Calama",
+      complement: "",
+      reference: "Chile",
+    };
+  }
+
+  function ensureHospitalHccFixedAddress(cart) {
+    if (!cart || typeof cart !== "object") return;
+    const fixed = normalizeDeliveryAddress(hospitalHccAddressTemplate());
+    if (!fixed) return;
+    cart.deliveryAddresses = [fixed];
+    cart.deliveryAddressId = fixed.id;
   }
 
   function hasValidDeliveryContact(cart) {
@@ -482,6 +733,8 @@
   function closeAllOverlays() {
     checkoutDeliveryStep = false;
     checkoutDeliverySubstep = "contact";
+    checkoutPickupStep = false;
+    checkoutPickupSubstep = "contact";
     const back = document.getElementById("overlay-backdrop");
     const pm = document.getElementById("product-modal");
     const cm = document.getElementById("checkout-modal");
@@ -1158,10 +1411,19 @@
     const cm = document.getElementById("checkout-modal");
     const ho = document.getElementById("checkout-head-order");
     const hd = document.getElementById("checkout-head-delivery");
+    const cart = loadCart();
+    const inReview =
+      (checkoutDeliveryStep &&
+        isDeliveryCart(cart) &&
+        checkoutDeliverySubstep === "review") ||
+      (checkoutDeliveryStep &&
+        isHospitalHccCart(cart) &&
+        checkoutDeliverySubstep === "review") ||
+      (checkoutPickupStep && isPickupLocalCart(cart) && checkoutPickupSubstep === "review");
     if (cm) {
       if (deliveryStep) cm.classList.add("checkout-modal--delivery-step");
       else cm.classList.remove("checkout-modal--delivery-step");
-      if (deliveryStep && checkoutDeliverySubstep === "review") {
+      if (deliveryStep && inReview) {
         cm.classList.add("checkout-modal--delivery-review");
       } else {
         cm.classList.remove("checkout-modal--delivery-review");
@@ -1171,15 +1433,65 @@
     if (hd) hd.hidden = !deliveryStep;
   }
 
-  function setDeliveryHeaderBackMeta() {
+  function updateCheckoutFlowHeader() {
     const btn = document.getElementById("checkout-delivery-back");
     const title = document.getElementById("checkout-delivery-title");
-    if (checkoutDeliverySubstep === "review") {
+    const cart = loadCart();
+
+    if (checkoutPickupStep && isPickupLocalCart(cart)) {
+      if (checkoutPickupSubstep === "review") {
+        if (btn) btn.hidden = true;
+        if (title) {
+          title.classList.add("checkout-delivery-head-title--review");
+          title.innerHTML =
+            "<span class=\"checkout-delivery-title-review\"><span class=\"checkout-delivery-title-review__ic\" aria-hidden=\"true\">🏪</span><span>" +
+            SERVICE_PICKUP_LABEL +
+            "</span></span>";
+        }
+        return;
+      }
+      if (btn) {
+        btn.hidden = false;
+        btn.setAttribute("aria-label", "Volver al pedido");
+      }
+      if (title) {
+        title.classList.remove("checkout-delivery-head-title--review");
+        title.textContent = "Datos para recoger en local";
+      }
+      return;
+    }
+
+    if (checkoutDeliveryStep && isHospitalHccCart(cart)) {
+      if (checkoutDeliverySubstep === "review") {
+        if (btn) btn.hidden = true;
+        if (title) {
+          title.classList.add("checkout-delivery-head-title--review");
+          title.innerHTML =
+            "<span class=\"checkout-delivery-title-review\"><span class=\"checkout-delivery-title-review__ic\" aria-hidden=\"true\">🏥</span><span>" +
+            SERVICE_HOSPITAL_HCC_LABEL +
+            "</span></span>";
+        }
+        return;
+      }
+      if (btn) {
+        btn.hidden = false;
+        btn.setAttribute("aria-label", "Volver al pedido");
+      }
+      if (title) {
+        title.classList.remove("checkout-delivery-head-title--review");
+        title.textContent = "Datos para pedido Hospital HCC";
+      }
+      return;
+    }
+
+    if (checkoutDeliveryStep && isDeliveryCart(cart) && checkoutDeliverySubstep === "review") {
       if (btn) btn.hidden = true;
       if (title) {
         title.classList.add("checkout-delivery-head-title--review");
         title.innerHTML =
-          "<span class=\"checkout-delivery-title-review\"><span class=\"checkout-delivery-title-review__ic\" aria-hidden=\"true\">🛵</span><span>A domicilio</span></span>";
+          "<span class=\"checkout-delivery-title-review\"><span class=\"checkout-delivery-title-review__ic\" aria-hidden=\"true\">🛵</span><span>" +
+          SERVICE_DELIVERY_LABEL +
+          "</span></span>";
       }
       return;
     }
@@ -1204,9 +1516,24 @@
   }
 
   function deliveryStepGoBack() {
+    if (checkoutPickupStep && isPickupLocalCart(loadCart())) {
+      if (checkoutPickupSubstep === "review") {
+        checkoutPickupSubstep = "contact";
+        renderCheckout(loadCart());
+        return;
+      }
+      checkoutPickupStep = false;
+      checkoutPickupSubstep = "contact";
+      renderCheckout(loadCart());
+      return;
+    }
     if (!checkoutDeliveryStep) return;
     if (checkoutDeliverySubstep === "review") {
-      checkoutDeliverySubstep = "addresses";
+      if (isHospitalHccCart(loadCart())) {
+        checkoutDeliverySubstep = "contact";
+      } else {
+        checkoutDeliverySubstep = "addresses";
+      }
       renderCheckout(loadCart());
       return;
     }
@@ -1326,14 +1653,22 @@
       c.deliveryName = name;
       c.deliveryPhone = cc + localDigits;
       saveCart(c);
-      checkoutDeliverySubstep = "addresses";
+      if (checkoutPickupStep && isPickupLocalCart(c)) {
+        checkoutPickupSubstep = "review";
+      } else if (isHospitalHccCart(c)) {
+        ensureHospitalHccFixedAddress(c);
+        saveCart(c);
+        checkoutDeliverySubstep = "review";
+      } else {
+        checkoutDeliverySubstep = "addresses";
+      }
       renderCheckout(c);
     };
     confirmWrap.appendChild(btn);
     stack.appendChild(confirmWrap);
 
     body.appendChild(stack);
-    setDeliveryHeaderBackMeta();
+    updateCheckoutFlowHeader();
     setTimeout(function () {
       nameInp.focus();
     }, 60);
@@ -1492,15 +1827,28 @@
     stack.appendChild(confirmWrap);
 
     body.appendChild(stack);
-    setDeliveryHeaderBackMeta();
+    updateCheckoutFlowHeader();
   }
 
-  function renderCheckoutDeliveryReview(body, cart) {
-    const selAddr = getSelectedDeliveryAddress(cart);
-    if (!selAddr) {
-      checkoutDeliverySubstep = "addresses";
-      renderCheckout(loadCart());
-      return;
+  function renderCheckoutDeliveryReview(body, cart, pickupReview, hospitalLocked) {
+    pickupReview = pickupReview === true;
+    hospitalLocked = hospitalLocked === true;
+    if (!pickupReview) {
+      if (hospitalLocked) {
+        ensureHospitalHccFixedAddress(cart);
+        saveCart(cart);
+      }
+      const selAddr = getSelectedDeliveryAddress(cart);
+      if (!hospitalLocked && !selAddr) {
+        checkoutDeliverySubstep = "addresses";
+        renderCheckout(loadCart());
+        return;
+      }
+      if (hospitalLocked && !getSelectedDeliveryAddress(cart)) {
+        checkoutDeliverySubstep = "contact";
+        renderCheckout(loadCart());
+        return;
+      }
     }
 
     body.innerHTML = "";
@@ -1512,6 +1860,10 @@
     account.open = false;
     const accSum = document.createElement("summary");
     accSum.className = "delivery-account-card__summary";
+    accSum.setAttribute(
+      "aria-label",
+      "Resumen del pedido: toca para ver u ocultar el detalle de productos y totales"
+    );
     const n = cartCount(cart);
     const tot = cartTotal(cart);
     const left = document.createElement("div");
@@ -1527,14 +1879,79 @@
     const pill = document.createElement("span");
     pill.className = "delivery-account-card__pill";
     pill.innerHTML =
-      "Precio de entrega gratis<span class=\"delivery-account-card__pill-chev\" aria-hidden=\"true\"></span>";
+      "Ver resumen<span class=\"delivery-account-card__pill-chev\" aria-hidden=\"true\"></span>";
     accSum.appendChild(left);
     accSum.appendChild(pill);
+
+    const accBody = document.createElement("div");
+    accBody.className = "delivery-account-card__body";
+    (cart.items || []).forEach(function (it) {
+      const line = document.createElement("div");
+      line.className = "delivery-account-line";
+      const textCol = document.createElement("div");
+      textCol.className = "delivery-account-line__text";
+      const title = document.createElement("p");
+      title.className = "delivery-account-line__title";
+      const q = Number(it.qty) || 1;
+      title.textContent = it.name + (it.variantName ? " («" + it.variantName + "»)" : "") + " ×" + q;
+      textCol.appendChild(title);
+      if (it.mods && it.mods.length) {
+        const modsEl = document.createElement("p");
+        modsEl.className = "delivery-account-line__mods";
+        modsEl.textContent = it.mods
+          .map(function (m) {
+            return (m.qty && m.qty > 1 ? m.qty + "× " : "") + m.option;
+          })
+          .join(", ");
+        textCol.appendChild(modsEl);
+      }
+      if (it.notes) {
+        const noteEl = document.createElement("p");
+        noteEl.className = "delivery-account-line__note";
+        noteEl.textContent = "Nota: " + it.notes;
+        textCol.appendChild(noteEl);
+      }
+      const priceEl = document.createElement("div");
+      priceEl.className = "delivery-account-line__price";
+      priceEl.textContent = formatCLP(Number(it.total) || 0);
+      line.appendChild(textCol);
+      line.appendChild(priceEl);
+      accBody.appendChild(line);
+    });
+
+    const shipRow = document.createElement("div");
+    shipRow.className = "delivery-account-card__subrow";
+    const shipLab = document.createElement("span");
+    shipLab.textContent = pickupReview ? "Recojo" : hospitalLocked ? "Entrega" : "Envío";
+    const shipVal = document.createElement("span");
+    shipVal.className = "delivery-account-card__subrow-val";
+    shipVal.textContent = pickupReview ? "En local" : hospitalLocked ? "Hospital HCC" : "Gratis";
+    shipRow.appendChild(shipLab);
+    shipRow.appendChild(shipVal);
+    accBody.appendChild(shipRow);
+
+    const totalRow = document.createElement("div");
+    totalRow.className = "delivery-account-card__subrow delivery-account-card__subrow--emph";
+    const totLab = document.createElement("span");
+    totLab.textContent = "Total estimado";
+    const totVal = document.createElement("span");
+    totVal.className = "delivery-account-card__subrow-val";
+    totVal.textContent = formatCLP(tot);
+    totalRow.appendChild(totLab);
+    totalRow.appendChild(totVal);
+    accBody.appendChild(totalRow);
+
     const accDetail = document.createElement("p");
     accDetail.className = "delivery-account-card__detail";
-    accDetail.textContent = "Sin costo de envío en este pedido.";
+    accDetail.textContent = pickupReview
+      ? "Retiras en el local del restaurante."
+      : hospitalLocked
+      ? "Entrega en Hospital Carlos Cisternas (Calama). Esta dirección es fija para pedidos Hospital HCC."
+      : "Sin costo de envío en este pedido.";
+    accBody.appendChild(accDetail);
+
     account.appendChild(accSum);
-    account.appendChild(accDetail);
+    account.appendChild(accBody);
     root.appendChild(account);
 
     const details = document.createElement("details");
@@ -1568,23 +1985,17 @@
     changeBtn.innerHTML =
       "<span class=\"delivery-mis-datos__change-ic\" aria-hidden=\"true\">↻</span> Cambiar";
     changeBtn.addEventListener("click", function () {
-      checkoutDeliverySubstep = "addresses";
+      if (pickupReview) {
+        checkoutPickupSubstep = "contact";
+      } else if (hospitalLocked) {
+        checkoutDeliverySubstep = "contact";
+      } else {
+        checkoutDeliverySubstep = "addresses";
+      }
       renderCheckout(loadCart());
     });
     rowPhone.appendChild(phoneSpan);
     rowPhone.appendChild(changeBtn);
-
-    const rowAddr = document.createElement("p");
-    rowAddr.className = "delivery-mis-datos__row";
-    const addrIc = document.createElement("span");
-    addrIc.className = "delivery-mis-datos__ic";
-    addrIc.setAttribute("aria-hidden", "true");
-    addrIc.innerHTML =
-      "<svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\"><path d=\"M12 21s7-4.5 7-11a7 7 0 1 0-14 0c0 6.5 7 11 7 11z\"/><circle cx=\"12\" cy=\"10\" r=\"2.5\"/></svg>";
-    const addrTxt = document.createElement("span");
-    addrTxt.textContent = "Dirección: " + formatDeliveryAddressMisDatosLine(selAddr);
-    rowAddr.appendChild(addrIc);
-    rowAddr.appendChild(addrTxt);
 
     const hint = document.createElement("p");
     hint.className = "delivery-mis-datos__hint";
@@ -1593,7 +2004,23 @@
 
     misInner.appendChild(rowName);
     misInner.appendChild(rowPhone);
-    misInner.appendChild(rowAddr);
+    if (!pickupReview) {
+      const rowAddr = document.createElement("p");
+      rowAddr.className = "delivery-mis-datos__row";
+      const addrIc = document.createElement("span");
+      addrIc.className = "delivery-mis-datos__ic";
+      addrIc.setAttribute("aria-hidden", "true");
+      addrIc.innerHTML =
+        "<svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\"><path d=\"M12 21s7-4.5 7-11a7 7 0 1 0-14 0c0 6.5 7 11 7 11z\"/><circle cx=\"12\" cy=\"10\" r=\"2.5\"/></svg>";
+      const addrTxt = document.createElement("span");
+      addrTxt.textContent =
+        "Dirección: " +
+        formatDeliveryAddressMisDatosLine(getSelectedDeliveryAddress(cart)) +
+        (hospitalLocked ? " (fija, no modificable)" : "");
+      rowAddr.appendChild(addrIc);
+      rowAddr.appendChild(addrTxt);
+      misInner.appendChild(rowAddr);
+    }
     misInner.appendChild(hint);
     details.appendChild(misInner);
     root.appendChild(details);
@@ -1662,16 +2089,127 @@
     paySel.id = "checkout-delivery-payment";
     paySel.className = "delivery-payment-select";
     paySel.setAttribute("aria-label", "Método de pago");
-    ["Efectivo", "Pago Online", "Transferencia"].forEach(function (opt) {
+    const enabledPay = getEnabledPaymentMethodsList();
+    let curPayId = String(cart.deliveryPaymentMethod || "").trim();
+    if (!enabledPay.some(function (m) { return m.id === curPayId; })) {
+      curPayId = enabledPay[0] ? enabledPay[0].id : "efectivo";
+    }
+    enabledPay.forEach(function (m) {
       const o = document.createElement("option");
-      o.value = opt;
-      o.textContent = opt;
-      if ((cart.deliveryPaymentMethod || "Efectivo") === opt) o.selected = true;
+      o.value = m.id;
+      o.textContent = m.label;
+      if (curPayId === m.id) o.selected = true;
       paySel.appendChild(o);
     });
     pay.appendChild(payHead);
     pay.appendChild(paySel);
+
+    const cashWrap = document.createElement("div");
+    cashWrap.className = "delivery-cash-tender";
+    cashWrap.hidden = !isCashPaymentMethodId(curPayId);
+
+    const cashLab = document.createElement("label");
+    cashLab.className = "delivery-cash-tender__label";
+    cashLab.setAttribute("for", "checkout-delivery-cash-tender");
+    cashLab.textContent = "Monto con el que pagará";
+
+    const cashInp = document.createElement("input");
+    cashInp.type = "number";
+    cashInp.inputMode = "numeric";
+    cashInp.min = "0";
+    cashInp.step = "1";
+    cashInp.id = "checkout-delivery-cash-tender";
+    cashInp.className =
+      "delivery-input delivery-input--boxed delivery-review-input delivery-cash-tender__input";
+    cashInp.placeholder = "Ej: 10000";
+    cashInp.setAttribute("autocomplete", "off");
+    if (cart.deliveryCashTender != null && isFinite(cart.deliveryCashTender)) {
+      cashInp.value = String(cart.deliveryCashTender);
+    }
+
+    const changePreview = document.createElement("p");
+    changePreview.className = "delivery-cash-tender__change";
+    changePreview.hidden = true;
+
+    const cashErr = document.createElement("p");
+    cashErr.className = "delivery-cash-tender__error";
+    cashErr.setAttribute("role", "alert");
+    cashErr.hidden = true;
+
+    const payInstr = document.createElement("div");
+    payInstr.className = "delivery-payment-instr";
+    const payInstrTitle = document.createElement("div");
+    payInstrTitle.className = "delivery-payment-instr__title";
+    payInstrTitle.textContent = "Instrucción de pago";
+    const payInstrBody = document.createElement("p");
+    payInstrBody.className = "delivery-payment-instr__body";
+    payInstrBody.textContent = pickupReview
+      ? "Coordina el pago al retirar tu pedido en el local."
+      : hospitalLocked
+      ? "Coordina el pago según el método elegido; la entrega es en Hospital Carlos Cisternas (Calama)."
+      : "Realiza el pago en efectivo al momento de la entrega.";
+    payInstr.appendChild(payInstrTitle);
+    payInstr.appendChild(payInstrBody);
+
+    function updateCashPreview() {
+      cashErr.hidden = true;
+      const raw = String(cashInp.value || "").trim();
+      if (raw === "") {
+        changePreview.hidden = true;
+        return;
+      }
+      const tender = Math.round(Number(cashInp.value));
+      if (!isFinite(tender) || tender < 0) {
+        changePreview.hidden = true;
+        return;
+      }
+      if (tender < tot) {
+        changePreview.textContent = "Faltan " + formatCLP(tot - tender) + " para cubrir el total.";
+        changePreview.classList.add("delivery-cash-tender__change--warn");
+        changePreview.hidden = false;
+        return;
+      }
+      changePreview.classList.remove("delivery-cash-tender__change--warn");
+      changePreview.textContent = "Vuelto a entregar: " + formatCLP(tender - tot);
+      changePreview.hidden = false;
+    }
+
+    cashInp.addEventListener("input", updateCashPreview);
+
+    const noteBox = document.createElement("div");
+    noteBox.className = "delivery-payment-customer-note";
+    noteBox.hidden = true;
+    function refreshPayMethodNote() {
+      const t = paymentInstructionsById(paySel.value);
+      if (t) {
+        noteBox.textContent = t;
+        noteBox.hidden = false;
+      } else {
+        noteBox.textContent = "";
+        noteBox.hidden = true;
+      }
+    }
+
+    paySel.addEventListener("change", function () {
+      const isCash = isCashPaymentMethodId(paySel.value);
+      cashWrap.hidden = !isCash;
+      cashErr.hidden = true;
+      if (isCash) updateCashPreview();
+      refreshPayMethodNote();
+    });
+
+    cashWrap.appendChild(cashLab);
+    cashWrap.appendChild(cashInp);
+    cashWrap.appendChild(changePreview);
+    cashWrap.appendChild(cashErr);
+    cashWrap.appendChild(payInstr);
+    pay.appendChild(cashWrap);
+    pay.appendChild(noteBox);
+
     root.appendChild(pay);
+
+    refreshPayMethodNote();
+    if (!cashWrap.hidden) updateCashPreview();
 
     const confirmWrap = document.createElement("div");
     confirmWrap.className = "checkout-delivery-confirm-wrap delivery-review__cta";
@@ -1683,15 +2221,47 @@
       const c = loadCart();
       c.deliveryOrderComment = String(commentInp.value || "").trim();
       c.deliveryCoupon = String(coupInp.value || "").trim();
-      c.deliveryPaymentMethod = String(paySel.value || "Efectivo");
+      const defPay = getEnabledPaymentMethodsList()[0];
+      const defPayId = defPay && defPay.id ? defPay.id : "efectivo";
+      c.deliveryPaymentMethod = String(paySel.value || defPayId);
+      if (isCashPaymentMethodId(c.deliveryPaymentMethod)) {
+        const raw = String(cashInp.value || "").trim();
+        const tender = Math.round(Number(cashInp.value));
+        if (raw === "" || !isFinite(tender) || tender < tot) {
+          cashErr.textContent =
+            raw === "" || !isFinite(tender)
+              ? "Indica con cuánto pagas en efectivo."
+              : "El monto debe ser al menos el total del pedido (" + formatCLP(tot) + ").";
+          cashErr.hidden = false;
+          cashInp.focus();
+          return;
+        }
+        c.deliveryCashTender = tender;
+      } else {
+        c.deliveryCashTender = null;
+      }
       saveCart(c);
-      openWhatsappWithOrder(c);
+      persistConfirmedDeliveryOrder(c, tot)
+        .then(function (res) {
+          if (!res.body || res.body.skipped) {
+            goToTrackingAfterOrder(c, res.body || { skipped: true });
+            return;
+          }
+          if (!res.ok || !res.body.ok) {
+            window.alert((res.body && res.body.error) || "No se pudo registrar el pedido en el servidor.");
+            return;
+          }
+          goToTrackingAfterOrder(c, res.body);
+        })
+        .catch(function () {
+          window.alert("Error de red al registrar el pedido.");
+        });
     });
     confirmWrap.appendChild(pedir);
     root.appendChild(confirmWrap);
 
     body.appendChild(root);
-    setDeliveryHeaderBackMeta();
+    updateCheckoutFlowHeader();
   }
 
   function renderCheckoutAddressForm(body, cart) {
@@ -1771,7 +2341,7 @@
     stack.appendChild(confirmWrap);
 
     body.appendChild(stack);
-    setDeliveryHeaderBackMeta();
+    updateCheckoutFlowHeader();
     setTimeout(function () {
       fStreet.inp.focus();
     }, 60);
@@ -1785,6 +2355,8 @@
     if (!cart.items.length) {
       checkoutDeliveryStep = false;
       checkoutDeliverySubstep = "contact";
+      checkoutPickupStep = false;
+      checkoutPickupSubstep = "contact";
       setCheckoutChromeMode(false);
       const p = document.createElement("p");
       p.className = "menu-empty";
@@ -1794,9 +2366,45 @@
       return;
     }
 
-    if (checkoutDeliveryStep && !isDeliveryCart(cart)) {
+    if (checkoutDeliveryStep && !isDeliveryCart(cart) && !isHospitalHccCart(cart)) {
       checkoutDeliveryStep = false;
       checkoutDeliverySubstep = "contact";
+    }
+
+    if (checkoutPickupStep && !isPickupLocalCart(cart)) {
+      checkoutPickupStep = false;
+      checkoutPickupSubstep = "contact";
+    }
+
+    if (checkoutPickupStep && isPickupLocalCart(cart)) {
+      setCheckoutChromeMode(true);
+      if (checkoutPickupSubstep === "contact") {
+        renderCheckoutDeliveryForm(body, cart);
+      } else if (checkoutPickupSubstep === "review") {
+        renderCheckoutDeliveryReview(body, cart, true);
+      } else {
+        checkoutPickupSubstep = "contact";
+        renderCheckoutDeliveryForm(body, cart);
+      }
+      return;
+    }
+
+    if (checkoutDeliveryStep && isHospitalHccCart(cart)) {
+      ensureHospitalHccFixedAddress(cart);
+      saveCart(cart);
+      if (checkoutDeliverySubstep === "addresses" || checkoutDeliverySubstep === "addressForm") {
+        checkoutDeliverySubstep = hasValidDeliveryContact(cart) ? "review" : "contact";
+      }
+      setCheckoutChromeMode(true);
+      if (checkoutDeliverySubstep === "contact") {
+        renderCheckoutDeliveryForm(body, cart);
+      } else if (checkoutDeliverySubstep === "review") {
+        renderCheckoutDeliveryReview(body, cart, false, true);
+      } else {
+        checkoutDeliverySubstep = "contact";
+        renderCheckoutDeliveryForm(body, cart);
+      }
+      return;
     }
 
     if (checkoutDeliveryStep && isDeliveryCart(cart)) {
@@ -1808,7 +2416,7 @@
       } else if (checkoutDeliverySubstep === "addressForm") {
         renderCheckoutAddressForm(body, cart);
       } else if (checkoutDeliverySubstep === "review") {
-        renderCheckoutDeliveryReview(body, cart);
+        renderCheckoutDeliveryReview(body, cart, false, false);
       } else {
         checkoutDeliverySubstep = "contact";
         renderCheckoutDeliveryForm(body, cart);
@@ -1912,47 +2520,80 @@
     const b1 = document.createElement("button");
     b1.type = "button";
     b1.className = "checkout-choice";
-    b1.textContent = "Para llevar";
+    b1.textContent = SERVICE_PICKUP_LABEL;
     const b2 = document.createElement("button");
     b2.type = "button";
     b2.className = "checkout-choice is-secondary";
-    b2.textContent = "A domicilio";
-    function setType(t) {
+    b2.textContent = SERVICE_DELIVERY_LABEL;
+    b1.addEventListener("click", function () {
       const c = loadCart();
-      c.serviceType = t;
-      checkoutDeliveryStep = false;
-      checkoutDeliverySubstep = "contact";
+      c.serviceType = SERVICE_PICKUP_LABEL;
       if (!isDeliveryCart(c)) {
         c.deliveryAddresses = [];
         c.deliveryAddressId = "";
         c.deliveryOrderComment = "";
         c.deliveryCoupon = "";
-        c.deliveryPaymentMethod = "Efectivo";
+        const defP = getEnabledPaymentMethodsList()[0];
+        c.deliveryPaymentMethod = defP && defP.id ? defP.id : "efectivo";
+        c.deliveryCashTender = null;
       }
       saveCart(c);
+      checkoutDeliveryStep = false;
+      checkoutDeliverySubstep = "contact";
+      checkoutPickupStep = true;
+      checkoutPickupSubstep = hasValidDeliveryContact(c) ? "review" : "contact";
       renderCheckout(c);
-    }
-    b1.addEventListener("click", function () {
-      setType("Para llevar");
     });
     b2.addEventListener("click", function () {
       const c = loadCart();
-      c.serviceType = "A domicilio";
+      if (isHospitalHccCart(c)) {
+        c.deliveryAddresses = [];
+        c.deliveryAddressId = "";
+      }
+      c.serviceType = SERVICE_DELIVERY_LABEL;
+      checkoutPickupStep = false;
+      checkoutPickupSubstep = "contact";
       saveCart(c);
       checkoutDeliveryStep = true;
       checkoutDeliverySubstep = hasValidDeliveryContact(c) ? "addresses" : "contact";
       renderCheckout(c);
     });
+    const b3 = document.createElement("button");
+    b3.type = "button";
+    b3.className = "checkout-choice is-secondary";
+    b3.textContent = SERVICE_HOSPITAL_HCC_LABEL;
+    b3.addEventListener("click", function () {
+      const c = loadCart();
+      c.serviceType = SERVICE_HOSPITAL_HCC_LABEL;
+      checkoutPickupStep = false;
+      checkoutPickupSubstep = "contact";
+      ensureHospitalHccFixedAddress(c);
+      saveCart(c);
+      checkoutDeliveryStep = true;
+      checkoutDeliverySubstep = hasValidDeliveryContact(c) ? "review" : "contact";
+      renderCheckout(c);
+    });
     choices.appendChild(b1);
     choices.appendChild(b2);
+    choices.appendChild(b3);
     body.appendChild(choices);
 
     const note = document.createElement("p");
     note.className = "checkout-note";
     let noteLine = cart.serviceType
       ? "Seleccionado: " + cart.serviceType
-      : "Selecciona Para llevar o A domicilio.";
-    if (isDeliveryCart(cart) && cart.deliveryAddressId && Array.isArray(cart.deliveryAddresses)) {
+      : "Selecciona " +
+        SERVICE_PICKUP_LABEL +
+        ", " +
+        SERVICE_DELIVERY_LABEL +
+        " o " +
+        SERVICE_HOSPITAL_HCC_LABEL +
+        ".";
+    if (
+      (isDeliveryCart(cart) || isHospitalHccCart(cart)) &&
+      cart.deliveryAddressId &&
+      Array.isArray(cart.deliveryAddresses)
+    ) {
       const sel = cart.deliveryAddresses.find(function (a) {
         return a && a.id === cart.deliveryAddressId;
       });
@@ -2144,19 +2785,31 @@
     const search = document.getElementById("menu-search");
     let raw = { categories: [], currencySymbol: "$" };
 
-    fetch("data/menu.json", { cache: "no-store" })
+    fetch(MENU_DATA_URL, { cache: "no-store" })
       .then(function (r) {
-        if (!r.ok) throw new Error("No se pudo cargar data/menu.json (" + r.status + ").");
+        if (!r.ok) throw new Error("No se pudo cargar el menú (" + r.status + ").");
         return r.json();
       })
       .then(function (data) {
+        if (!data || !Array.isArray(data.categories)) {
+          throw new Error("Respuesta de menú inválida.");
+        }
         const errEl = document.getElementById("menu-error");
         if (errEl) {
           errEl.hidden = true;
           errEl.textContent = "";
         }
         raw = data;
+        checkoutPaymentFromMenu = normalizeCheckoutPaymentFromMenu(data.checkoutPayment);
         menuModifierLibrary = Array.isArray(data.modifierLibrary) ? data.modifierLibrary : [];
+        (function applyLogo() {
+          const url = String((data && data.logoUrl) || "").trim();
+          if (!url) return;
+          const m = document.getElementById("brand-logo-mobile");
+          const h = document.getElementById("menu-logo");
+          if (m) m.src = url;
+          if (h) h.src = url;
+        })();
         const categories = data.categories || [];
         const idx = indexMenu(categories);
         render(categories, data.currencySymbol || "$", idx);
@@ -2172,7 +2825,7 @@
         if (cmClose) cmClose.addEventListener("click", closeOverlays);
         document.addEventListener("keydown", function (e) {
           if (e.key !== "Escape") return;
-          if (checkoutDeliveryStep) {
+          if (checkoutDeliveryStep || checkoutPickupStep) {
             const cm = document.getElementById("checkout-modal");
             if (cm && !cm.hidden) {
               deliveryStepGoBack();

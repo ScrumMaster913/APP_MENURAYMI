@@ -1,5 +1,46 @@
 {
+    "logoUrl": "assets\/uploads\/logo-20260424-173533-110226.png",
     "currencySymbol": "$",
+    "checkoutPayment": {
+        "methods": [
+            {
+                "id": "efectivo",
+                "label": "Efectivo",
+                "enabled": true,
+                "instructions": ""
+            },
+            {
+                "id": "pago_online",
+                "label": "Pago Online",
+                "enabled": false,
+                "instructions": ""
+            },
+            {
+                "id": "transferencia",
+                "label": "Transferencia",
+                "enabled": true,
+                "instructions": ""
+            },
+            {
+                "id": "pluxee_sodexo",
+                "label": "Pluxee (Sodexo)",
+                "enabled": true,
+                "instructions": "Enviar pago online por whatssap."
+            },
+            {
+                "id": "ticket_edenred",
+                "label": "Ticket Restaurant (Edenred)",
+                "enabled": true,
+                "instructions": ""
+            },
+            {
+                "id": "tarjeta",
+                "label": "Tarjeta",
+                "enabled": true,
+                "instructions": ""
+            }
+        ]
+    },
     "categories": [
         {
             "id": "destacados",
@@ -69,7 +110,7 @@
                             "price": 4500
                         },
                         {
-                            "name": "Para llevar",
+                            "name": "Recojo en local",
                             "price": 4500
                         }
                     ],
@@ -98,7 +139,7 @@
                             "price": 4500
                         },
                         {
-                            "name": "Para llevar",
+                            "name": "Recojo en local",
                             "price": 5000
                         }
                     ],
@@ -171,6 +212,22 @@
                     "name": "dgdfgdf",
                     "price": 0,
                     "maxQty": 1
+                }
+            ]
+        },
+        {
+            "id": "mod-mod4pg0h",
+            "name": "Nueva categoría",
+            "optional": true,
+            "multiSelect": true,
+            "minSelect": 0,
+            "maxSelect": 0,
+            "options": [
+                {
+                    "id": "opt-mod4pg0i21ts",
+                    "name": "Opción 1",
+                    "price": 0,
+                    "maxQty": 99
                 }
             ]
         }

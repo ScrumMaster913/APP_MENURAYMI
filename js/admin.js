@@ -18,6 +18,89 @@
   var adminActiveView = "products";
   var expandedLibModId = null;
 
+  /** Catálogo fijo de métodos de pago (debe coincidir con api/save-menu.php y js/products.js). */
+  var CHECKOUT_PAY_CATALOG = [
+    { id: "efectivo", label: "Efectivo" },
+    { id: "pago_online", label: "Pago Online" },
+    { id: "transferencia", label: "Transferencia" },
+    { id: "pluxee_sodexo", label: "Pluxee (Sodexo)" },
+    { id: "ticket_edenred", label: "Ticket Restaurant (Edenred)" },
+    { id: "tarjeta", label: "Tarjeta" },
+  ];
+
+  function normalizeMenuCheckoutPayment(raw) {
+    var src = raw && typeof raw === "object" && Array.isArray(raw.methods) ? raw.methods : [];
+    var byId = {};
+    var i;
+    for (i = 0; i < src.length; i++) {
+      var row = src[i];
+      if (row && row.id) byId[row.id] = row;
+    }
+    var legacyGlobal =
+      raw && typeof raw.instructions === "string" ? String(raw.instructions).trim().slice(0, 800) : "";
+    var methods = CHECKOUT_PAY_CATALOG.map(function (def) {
+      var s = byId[def.id];
+      var enabled = s && s.enabled === false ? false : true;
+      var lab =
+        s && s.label && String(s.label).trim()
+          ? String(s.label).trim().slice(0, 80)
+          : def.label;
+      var per =
+        s && typeof s.instructions === "string" ? String(s.instructions).slice(0, 800) : "";
+      if (def.id === "efectivo" && !per && legacyGlobal) {
+        per = legacyGlobal;
+      }
+      return { id: def.id, label: lab, enabled: enabled, instructions: per };
+    });
+    return { methods: methods };
+  }
+
+  function syncCheckoutPaymentFromDom() {
+    if (!menuState || !menuState.checkoutPayment) return;
+    menuState.checkoutPayment.methods.forEach(function (m) {
+      var cb = document.getElementById("pay-enable-" + m.id);
+      if (cb) m.enabled = !!cb.checked;
+      var ti = document.getElementById("pay-instr-" + m.id);
+      if (ti) m.instructions = ti.value;
+    });
+  }
+
+  function renderCheckoutPaymentAdmin() {
+    var list = document.getElementById("admin-pay-methods-list");
+    if (!list || !menuState || !menuState.checkoutPayment) return;
+    list.innerHTML = "";
+    menuState.checkoutPayment.methods.forEach(function (m) {
+      var block = document.createElement("div");
+      block.className = "admin-pay-method-block";
+      var head = document.createElement("div");
+      head.className = "admin-pay-method-block__head";
+      var lab = document.createElement("label");
+      lab.className = "admin-pay-method-block__toggle";
+      var cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.id = "pay-enable-" + m.id;
+      cb.checked = !!m.enabled;
+      lab.appendChild(cb);
+      lab.appendChild(document.createTextNode(" " + m.label));
+      head.appendChild(lab);
+      block.appendChild(head);
+      var ilab = document.createElement("label");
+      ilab.className = "admin-pay-method-block__instr-label";
+      ilab.setAttribute("for", "pay-instr-" + m.id);
+      ilab.textContent = "Instrucciones para el cliente (solo si elige este método)";
+      var ti = document.createElement("textarea");
+      ti.id = "pay-instr-" + m.id;
+      ti.className = "admin-checkout-payment__textarea admin-checkout-payment__textarea--method";
+      ti.rows = 3;
+      ti.maxLength = 800;
+      ti.placeholder = "Ej.: «Presentar vale con monto legible» o «Solo débito».";
+      ti.value = m.instructions || "";
+      block.appendChild(ilab);
+      block.appendChild(ti);
+      list.appendChild(block);
+    });
+  }
+
   function deepClone(obj) {
     return JSON.parse(JSON.stringify(obj));
   }
@@ -279,11 +362,26 @@
   }
 
   function buildPayload() {
+    syncCheckoutPaymentFromDom();
     var curEl = document.getElementById("currency-symbol");
     var currencySymbol =
       curEl && curEl.value.trim() ? curEl.value.trim() : "$";
+    var logoEl = document.getElementById("logo-url");
+    var logoUrl = logoEl && logoEl.value.trim() ? logoEl.value.trim() : "";
+    var cp = menuState.checkoutPayment || normalizeMenuCheckoutPayment(null);
     return {
+      logoUrl: logoUrl,
       currencySymbol: currencySymbol,
+      checkoutPayment: {
+        methods: cp.methods.map(function (m) {
+          return {
+            id: m.id,
+            label: m.label,
+            enabled: !!m.enabled,
+            instructions: m.instructions != null ? String(m.instructions) : "",
+          };
+        }),
+      },
       modifierLibrary: (menuState.modifierLibrary || [])
         .map(function (m) {
           return serializeModifierGroupPayload(m);
@@ -335,6 +433,8 @@
     });
     var cur = document.getElementById("currency-symbol");
     if (cur && cur.value.trim()) menuState.currencySymbol = cur.value.trim();
+    var lg = document.getElementById("logo-url");
+    if (lg) menuState.logoUrl = lg.value.trim();
   }
 
   function closeDetails(el) {
@@ -559,7 +659,7 @@
         if (!p.variants.length) {
           p.variants = [
             { name: "Para mesa", price: p.price || 0 },
-            { name: "Para llevar", price: p.price || 0 },
+            { name: "Recojo en local", price: p.price || 0 },
           ];
         }
         syncPriceFromVariants();
@@ -1135,6 +1235,9 @@
     if (adminActiveView === "modifiers") {
       renderModifierLibrary();
     }
+    if (adminActiveView === "payment") {
+      renderCheckoutPaymentAdmin();
+    }
   }
 
   function stripModifierIdFromProducts(modId) {
@@ -1246,23 +1349,33 @@
     adminActiveView = view;
     var vp = document.getElementById("admin-view-products");
     var vm = document.getElementById("admin-view-modifiers");
+    var vpay = document.getElementById("admin-view-payment");
     var sticky = document.getElementById("admin-sticky-tools");
     var navP = document.getElementById("nav-admin-products");
     var navM = document.getElementById("nav-admin-modifiers");
+    var navPay = document.getElementById("nav-admin-payment");
     var crumb = document.getElementById("admin-hero-crumb");
     if (vp) vp.hidden = view !== "products";
     if (vm) vm.hidden = view !== "modifiers";
+    if (vpay) vpay.hidden = view !== "payment";
     if (sticky) sticky.hidden = view !== "products";
     if (navP) navP.classList.toggle("is-active", view === "products");
     if (navM) navM.classList.toggle("is-active", view === "modifiers");
+    if (navPay) navPay.classList.toggle("is-active", view === "payment");
     if (crumb) {
-      crumb.textContent =
-        view === "modifiers"
-          ? "Menú / Modificadores"
-          : "Menú / Página de productos";
+      if (view === "modifiers") {
+        crumb.textContent = "Menú / Modificadores";
+      } else if (view === "payment") {
+        crumb.textContent = "Menú / Métodos de pago";
+      } else {
+        crumb.textContent = "Menú / Página de productos";
+      }
     }
     if (view === "modifiers") {
       renderModifierLibrary();
+    }
+    if (view === "payment") {
+      renderCheckoutPaymentAdmin();
     }
   }
 
@@ -1990,14 +2103,19 @@
     if (root) {
       root.innerHTML = '<p class="admin-loading">Cargando menú…</p>';
     }
-    return fetch("data/menu.json", { cache: "no-store" })
+    return fetch("api/menu.php", { cache: "no-store" })
       .then(function (r) {
-        if (!r.ok) throw new Error("No se pudo leer data/menu.json (" + r.status + ").");
+        if (!r.ok) throw new Error("No se pudo cargar el menú (" + r.status + ").");
         return r.json();
       })
       .then(function (data) {
+        if (!data || !Array.isArray(data.categories)) {
+          throw new Error("Respuesta de menú inválida.");
+        }
         menuState = {
+          logoUrl: (data.logoUrl && String(data.logoUrl)) || "",
           currencySymbol: data.currencySymbol || "$",
+          checkoutPayment: normalizeMenuCheckoutPayment(data.checkoutPayment),
           categories: Array.isArray(data.categories) ? deepClone(data.categories) : [],
           modifierLibrary: Array.isArray(data.modifierLibrary)
             ? deepClone(data.modifierLibrary)
@@ -2013,6 +2131,14 @@
             ensureProductDefaults(p);
           });
         });
+        (function applyAdminLogo() {
+          var img = document.getElementById("admin-logo");
+          var lg = document.getElementById("logo-url");
+          var url = (menuState.logoUrl || "").trim();
+          if (lg) lg.value = url;
+          if (img && url) img.src = url;
+        })();
+        renderCheckoutPaymentAdmin();
         render();
       })
       .catch(function (e) {
@@ -2064,7 +2190,12 @@
       })
       .then(function (res) {
         if (res.body && res.body.ok) {
-          showBanner("ok", "Guardado correctamente en data/menu.json.");
+          showBanner(
+            "ok",
+            res.body && res.body.storage === "mysql"
+              ? "Guardado correctamente en MySQL."
+              : "Guardado correctamente en data/menu.json."
+          );
           menuState.currencySymbol = payload.currencySymbol;
         } else {
           showBanner(
@@ -2169,6 +2300,7 @@
 
     var navP = document.getElementById("nav-admin-products");
     var navM = document.getElementById("nav-admin-modifiers");
+    var navPay = document.getElementById("nav-admin-payment");
     if (navP) {
       navP.addEventListener("click", function (e) {
         e.preventDefault();
@@ -2179,6 +2311,12 @@
       navM.addEventListener("click", function (e) {
         e.preventDefault();
         setAdminView("modifiers");
+      });
+    }
+    if (navPay) {
+      navPay.addEventListener("click", function (e) {
+        e.preventDefault();
+        setAdminView("payment");
       });
     }
 
@@ -2216,6 +2354,53 @@
 
     var btnReload = document.getElementById("btn-reload");
     if (btnReload) btnReload.addEventListener("click", loadMenu);
+
+    var btnUpload = document.getElementById("btn-upload-logo");
+    if (btnUpload) {
+      btnUpload.addEventListener("click", function () {
+        var fileInput = document.getElementById("logo-file");
+        var urlInput = document.getElementById("logo-url");
+        var img = document.getElementById("admin-logo");
+        if (!fileInput || !urlInput) return;
+        var file = fileInput.files && fileInput.files[0] ? fileInput.files[0] : null;
+        if (!file) {
+          showBanner("error", "Selecciona un archivo de imagen para subir.");
+          return;
+        }
+        hideBanner();
+        btnUpload.disabled = true;
+        btnUpload.textContent = "Subiendo…";
+        var fd = new FormData();
+        fd.append("file", file);
+        fetch("api/upload-logo.php", { method: "POST", body: fd })
+          .then(function (r) {
+            return r
+              .json()
+              .catch(function () {
+                throw new Error("La respuesta no es JSON. ¿Está activo PHP en Apache?");
+              })
+              .then(function (j) {
+                if (!r.ok || !j || !j.ok) {
+                  throw new Error((j && j.error) || "Error al subir el logo.");
+                }
+                return j;
+              });
+          })
+          .then(function (j) {
+            urlInput.value = j.url;
+            if (menuState) menuState.logoUrl = j.url;
+            if (img) img.src = j.url;
+            showBanner("ok", "Logo subido: " + j.url + " (recuerda Guardar).");
+          })
+          .catch(function (e) {
+            showBanner("error", e.message || "No se pudo subir el logo.");
+          })
+          .finally(function () {
+            btnUpload.disabled = false;
+            btnUpload.textContent = "Subir logo";
+          });
+      });
+    }
   }
 
   if (document.readyState === "loading") {

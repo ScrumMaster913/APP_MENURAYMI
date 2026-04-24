@@ -68,4 +68,26 @@ function initStatus() {
   if (label) label.textContent = open ? "Abierto" : "Cerrado";
 }
 
-document.addEventListener("DOMContentLoaded", initStatus);
+function applyLogoUrl(logoUrl) {
+  const url = (logoUrl || "").toString().trim();
+  if (!url) return;
+  const m = document.getElementById("home-logo-mobile");
+  const h = document.getElementById("home-logo-hero");
+  if (m) m.src = url;
+  if (h) h.src = url;
+}
+
+function initBrand() {
+  fetch("api/menu.php", { cache: "no-store" })
+    .then((r) => (r.ok ? r.json() : null))
+    .then((data) => {
+      if (!data) return;
+      applyLogoUrl(data.logoUrl);
+    })
+    .catch(() => {});
+}
+
+document.addEventListener("DOMContentLoaded", function () {
+  initStatus();
+  initBrand();
+});

@@ -228,6 +228,16 @@ body.admin-body {
   padding-bottom: 6px;
 }
 
+.admin-hero__logo-band {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 0 20px 16px;
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+  background: #fafafa;
+}
+
 .admin-currency-pill {
   display: inline-flex;
   align-items: center;
@@ -238,6 +248,22 @@ body.admin-body {
   padding: 6px 12px;
 }
 
+.admin-currency-pill--narrow .admin-currency-pill__input {
+  width: 44px;
+  min-width: 44px;
+  flex: 0 0 44px;
+}
+
+.admin-currency-pill--grow {
+  flex: 1 1 260px;
+  min-width: 220px;
+}
+
+.admin-currency-pill--file {
+  flex: 1 1 240px;
+  min-width: 200px;
+}
+
 .admin-currency-pill__label {
   font-size: 12px;
   font-weight: 600;
@@ -245,14 +271,25 @@ body.admin-body {
 }
 
 .admin-currency-pill__input {
-  width: 36px;
+  flex: 1 1 auto;
+  min-width: 0;
   border: none;
   background: transparent;
   font-family: inherit;
   font-size: 15px;
   font-weight: 600;
+  text-align: left;
+  padding: 2px 0;
+}
+
+.admin-currency-pill--narrow .admin-currency-pill__input {
   text-align: center;
-  padding: 0;
+}
+
+.admin-currency-pill--file .admin-currency-pill__input {
+  font-size: 13px;
+  font-weight: 600;
+  min-width: 180px;
 }
 
 .admin-currency-pill__input:focus {
@@ -414,6 +451,112 @@ body.admin-body {
 
 .admin-hint a {
   color: var(--olc-blue);
+}
+
+.admin-checkout-payment {
+  margin: 16px 20px 0;
+  padding: 16px 18px 18px;
+  max-width: 720px;
+  border: 1px solid var(--olc-border);
+  border-radius: var(--olc-radius);
+  background: #fafbfd;
+}
+
+.admin-checkout-payment__title {
+  margin: 0 0 8px;
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--olc-text);
+}
+
+.admin-checkout-payment__lead,
+.admin-checkout-payment__note {
+  margin: 0 0 10px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--olc-text-muted);
+}
+
+.admin-checkout-payment__note {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(0, 110, 255, 0.06);
+  border: 1px solid rgba(0, 110, 255, 0.12);
+  color: var(--olc-text);
+}
+
+.admin-checkout-payment__methods {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 12px 0 0;
+}
+
+.admin-pay-method-block {
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--olc-border);
+  background: #fff;
+}
+
+.admin-pay-method-block__head {
+  margin-bottom: 8px;
+}
+
+.admin-pay-method-block__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--olc-text);
+  cursor: pointer;
+}
+
+.admin-pay-method-block__toggle input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--olc-blue);
+}
+
+.admin-pay-method-block__instr-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--olc-text-muted);
+  margin-bottom: 6px;
+}
+
+.admin-checkout-payment__label {
+  display: block;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--olc-text);
+  margin-bottom: 6px;
+}
+
+.admin-checkout-payment__textarea {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 100px;
+  padding: 12px 14px;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.45;
+  border-radius: 10px;
+  border: 1px solid var(--olc-border);
+  resize: vertical;
+}
+
+.admin-checkout-payment__textarea:focus {
+  outline: none;
+  border-color: var(--olc-blue);
+  box-shadow: 0 0 0 2px rgba(0, 110, 255, 0.15);
+}
+
+.admin-checkout-payment__textarea--method {
+  min-height: 72px;
+  margin-top: 0;
 }
 
 #admin-root {
@@ -1313,6 +1456,11 @@ body.admin-body {
 
 body.olc-drawer-open {
   overflow: hidden;
+}
+
+/* ——— Métodos de pago (checkout domicilio) ——— */
+.admin-view-payment {
+  padding: 0 0 48px;
 }
 
 /* ——— Biblioteca global de modificadores ——— */
