@@ -1,8 +1,12 @@
 (function () {
   const CART_KEY = "intiRaymiCart:v1";
+  /** WhatsApp del restaurante (solo dígitos, sin +) — mismo número que en index.html. */
+  const RESTAURANT_WA_DIGITS = "56552741723";
   let menuModifierLibrary = [];
   /** Paso datos domicilio dentro del mismo modal de checkout (no popup aparte). */
   let checkoutDeliveryStep = false;
+  /** Dentro del paso domicilio: contacto → lista de direcciones → formulario nueva dirección. */
+  let checkoutDeliverySubstep = "contact";
 
   function cloneModifierGroup(g) {
     return JSON.parse(JSON.stringify(g));
@@ -167,6 +171,71 @@
     }
   }
 
+  function newDeliveryAddressId() {
+    return "addr-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
+  }
+
+  function normalizeDeliveryAddress(a) {
+    if (!a || typeof a !== "object") return null;
+    const id = typeof a.id === "string" && a.id ? a.id : newDeliveryAddressId();
+    return {
+      id: id,
+      street: typeof a.street === "string" ? a.street : "",
+      number: typeof a.number === "string" ? a.number : "",
+      complement: typeof a.complement === "string" ? a.complement : "",
+      reference: typeof a.reference === "string" ? a.reference : "",
+    };
+  }
+
+  function getSelectedDeliveryAddress(cart) {
+    if (!cart || !cart.deliveryAddressId || !Array.isArray(cart.deliveryAddresses)) return null;
+    return cart.deliveryAddresses.find(function (a) {
+      return a && a.id === cart.deliveryAddressId;
+    }) || null;
+  }
+
+  function formatDeliveryAddressMisDatosLine(addr) {
+    if (!addr) return "";
+    const s = String(addr.street || "").trim().toLowerCase();
+    const n = String(addr.number || "").trim();
+    let line = s + (n ? " #" + n : "");
+    const c = String(addr.complement || "").trim();
+    if (c) line += ", " + c.toLowerCase();
+    return line || formatDeliveryAddressLabel(addr);
+  }
+
+  function formatDeliveryAddressLabel(addr) {
+    if (!addr) return "";
+    const s = String(addr.street || "").trim();
+    const n = String(addr.number || "").trim();
+    const c = String(addr.complement || "").trim();
+    const r = String(addr.reference || "").trim();
+    let line = (s + (n ? " " + n : "")).trim();
+    if (c) line += (line ? ", " : "") + c;
+    if (r) line += (line ? " · " : "") + r;
+    return line || "Sin descripción";
+  }
+
+  function maskDeliveryName(name) {
+    const raw = String(name || "").trim();
+    if (!raw) return "";
+    const parts = raw.split(/\s+/).filter(Boolean);
+    function maskPart(p) {
+      if (p.length <= 2) return p[0] + "*";
+      return p.slice(0, 3) + "**";
+    }
+    if (!parts.length) return "";
+    if (parts.length === 1) return "Nombre: " + maskPart(parts[0]);
+    return "Nombre: " + maskPart(parts[0]) + " " + maskPart(parts[parts.length - 1]);
+  }
+
+  function maskDeliveryPhone(phone) {
+    const d = String(phone || "").replace(/\D/g, "");
+    if (d.length < 5) return phone ? "Teléfono: " + phone : "";
+    const vis = d.slice(0, Math.min(d.length, 9));
+    return "Teléfono: " + vis + "***";
+  }
+
   function loadCart() {
     const raw = localStorage.getItem(CART_KEY);
     const data = safeJsonParse(raw, null);
@@ -175,11 +244,69 @@
     if (typeof data.serviceType !== "string") data.serviceType = "";
     if (typeof data.deliveryName !== "string") data.deliveryName = "";
     if (typeof data.deliveryPhone !== "string") data.deliveryPhone = "";
+    if (!Array.isArray(data.deliveryAddresses)) data.deliveryAddresses = [];
+    else {
+      data.deliveryAddresses = data.deliveryAddresses
+        .map(normalizeDeliveryAddress)
+        .filter(function (x) {
+          return x;
+        });
+    }
+    if (typeof data.deliveryAddressId !== "string") data.deliveryAddressId = "";
+    if (typeof data.deliveryOrderComment !== "string") data.deliveryOrderComment = "";
+    if (typeof data.deliveryCoupon !== "string") data.deliveryCoupon = "";
+    if (typeof data.deliveryPaymentMethod !== "string") data.deliveryPaymentMethod = "";
+    const payOpts = ["Efectivo", "Pago Online", "Transferencia"];
+    if (!payOpts.includes(data.deliveryPaymentMethod)) data.deliveryPaymentMethod = "Efectivo";
     return data;
   }
 
   function saveCart(cart) {
     localStorage.setItem(CART_KEY, JSON.stringify(cart));
+  }
+
+  function buildDeliveryOrderMessage(cart) {
+    const lines = [];
+    lines.push("Hola, pedido a domicilio desde el menú digital:");
+    lines.push("");
+    (cart.items || []).forEach(function (it, i) {
+      const nm =
+        it.name +
+        (it.variantName ? " («" + it.variantName + "»)" : "") +
+        " ×" +
+        (Number(it.qty) || 1);
+      lines.push((i + 1) + ". " + nm + " — " + formatCLP(it.total || 0));
+      if (it.mods && it.mods.length) {
+        const mtext = it.mods
+          .map(function (m) {
+            return (m.qty && m.qty > 1 ? m.qty + "× " : "") + m.option;
+          })
+          .join(", ");
+        lines.push("   +" + mtext);
+      }
+      if (it.notes) lines.push("   Nota prod.: " + it.notes);
+    });
+    lines.push("");
+    lines.push("Total: " + formatCLP(cartTotal(cart)));
+    lines.push("");
+    lines.push("Nombre: " + (cart.deliveryName || ""));
+    lines.push("Tel: " + (cart.deliveryPhone || ""));
+    const addr = getSelectedDeliveryAddress(cart);
+    lines.push("Dirección: " + (addr ? formatDeliveryAddressLabel(addr) : "—"));
+    if (addr && addr.reference) lines.push("Referencia entrega: " + addr.reference);
+    lines.push("Pago: " + (cart.deliveryPaymentMethod || "Efectivo"));
+    if (String(cart.deliveryCoupon || "").trim()) lines.push("Cupón: " + String(cart.deliveryCoupon).trim());
+    if (String(cart.deliveryOrderComment || "").trim()) {
+      lines.push("Comentario: " + String(cart.deliveryOrderComment).trim());
+    }
+    return lines.join("\n");
+  }
+
+  function openWhatsappWithOrder(cart) {
+    const msg = buildDeliveryOrderMessage(cart);
+    const url = "https://wa.me/" + RESTAURANT_WA_DIGITS + "?text=" + encodeURIComponent(msg);
+    window.open(url, "_blank", "noopener,noreferrer");
+    closeAllOverlays();
   }
 
   function isDeliveryCart(cart) {
@@ -189,6 +316,14 @@
       .normalize("NFD")
       .replace(/[\u0300-\u036f]/g, "");
     return t.indexOf("domicilio") !== -1;
+  }
+
+  function hasValidDeliveryContact(cart) {
+    const name = String((cart && cart.deliveryName) || "").trim();
+    if (name.length < 2) return false;
+    const phone = String((cart && cart.deliveryPhone) || "").trim();
+    const digits = phone.replace(/\D/g, "");
+    return digits.length >= 8;
   }
 
   function cartCount(cart) {
@@ -346,6 +481,7 @@
 
   function closeAllOverlays() {
     checkoutDeliveryStep = false;
+    checkoutDeliverySubstep = "contact";
     const back = document.getElementById("overlay-backdrop");
     const pm = document.getElementById("product-modal");
     const cm = document.getElementById("checkout-modal");
@@ -1025,9 +1161,74 @@
     if (cm) {
       if (deliveryStep) cm.classList.add("checkout-modal--delivery-step");
       else cm.classList.remove("checkout-modal--delivery-step");
+      if (deliveryStep && checkoutDeliverySubstep === "review") {
+        cm.classList.add("checkout-modal--delivery-review");
+      } else {
+        cm.classList.remove("checkout-modal--delivery-review");
+      }
     }
     if (ho) ho.hidden = !!deliveryStep;
     if (hd) hd.hidden = !deliveryStep;
+  }
+
+  function setDeliveryHeaderBackMeta() {
+    const btn = document.getElementById("checkout-delivery-back");
+    const title = document.getElementById("checkout-delivery-title");
+    if (checkoutDeliverySubstep === "review") {
+      if (btn) btn.hidden = true;
+      if (title) {
+        title.classList.add("checkout-delivery-head-title--review");
+        title.innerHTML =
+          "<span class=\"checkout-delivery-title-review\"><span class=\"checkout-delivery-title-review__ic\" aria-hidden=\"true\">🛵</span><span>A domicilio</span></span>";
+      }
+      return;
+    }
+    if (btn) {
+      btn.hidden = false;
+      if (checkoutDeliverySubstep === "contact") {
+        btn.setAttribute("aria-label", "Volver al pedido");
+      } else if (checkoutDeliverySubstep === "addresses") {
+        btn.setAttribute("aria-label", "Volver a nombre y teléfono");
+      } else {
+        btn.setAttribute("aria-label", "Volver a la lista de direcciones");
+      }
+    }
+    if (title) {
+      title.classList.remove("checkout-delivery-head-title--review");
+      if (checkoutDeliverySubstep === "contact") {
+        title.textContent = "Agrega tu nombre y teléfono";
+      } else {
+        title.textContent = "Agrega tu dirección";
+      }
+    }
+  }
+
+  function deliveryStepGoBack() {
+    if (!checkoutDeliveryStep) return;
+    if (checkoutDeliverySubstep === "review") {
+      checkoutDeliverySubstep = "addresses";
+      renderCheckout(loadCart());
+      return;
+    }
+    if (checkoutDeliverySubstep === "addressForm") {
+      checkoutDeliverySubstep = "addresses";
+      renderCheckout(loadCart());
+      return;
+    }
+    if (checkoutDeliverySubstep === "addresses") {
+      if (hasValidDeliveryContact(loadCart())) {
+        checkoutDeliveryStep = false;
+        checkoutDeliverySubstep = "contact";
+        renderCheckout(loadCart());
+        return;
+      }
+      checkoutDeliverySubstep = "contact";
+      renderCheckout(loadCart());
+      return;
+    }
+    checkoutDeliveryStep = false;
+    checkoutDeliverySubstep = "contact";
+    renderCheckout(loadCart());
   }
 
   function renderCheckoutDeliveryForm(body, cart) {
@@ -1125,15 +1326,454 @@
       c.deliveryName = name;
       c.deliveryPhone = cc + localDigits;
       saveCart(c);
-      checkoutDeliveryStep = false;
+      checkoutDeliverySubstep = "addresses";
       renderCheckout(c);
     };
     confirmWrap.appendChild(btn);
     stack.appendChild(confirmWrap);
 
     body.appendChild(stack);
+    setDeliveryHeaderBackMeta();
     setTimeout(function () {
       nameInp.focus();
+    }, 60);
+  }
+
+  function renderCheckoutAddressPicker(body, cart) {
+    body.innerHTML = "";
+    const stack = document.createElement("div");
+    stack.className = "checkout-delivery-stack";
+
+    const details = document.createElement("details");
+    details.className = "delivery-mis-datos";
+    details.open = true;
+    const sum = document.createElement("summary");
+    sum.className = "delivery-mis-datos__summary";
+    sum.innerHTML =
+      "<span>Mis datos</span><span class=\"delivery-mis-datos__chev\" aria-hidden=\"true\"></span>";
+    details.appendChild(sum);
+
+    const misInner = document.createElement("div");
+    misInner.className = "delivery-mis-datos__inner";
+    const rowName = document.createElement("p");
+    rowName.className = "delivery-mis-datos__row";
+    rowName.innerHTML =
+      "<span class=\"delivery-mis-datos__ic\" aria-hidden=\"true\"><svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\"><path d=\"M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2\"/><circle cx=\"12\" cy=\"7\" r=\"4\"/></svg></span><span>" +
+      (maskDeliveryName(cart.deliveryName) || "Nombre: —") +
+      "</span>";
+    const rowPhone = document.createElement("p");
+    rowPhone.className = "delivery-mis-datos__row";
+    rowPhone.innerHTML =
+      "<span class=\"delivery-mis-datos__ic\" aria-hidden=\"true\"><svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\"><path d=\"M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.44 12.44 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.44 12.44 0 0 0 2.81.7A2 2 0 0 1 22 16.92z\"/></svg></span><span>" +
+      (maskDeliveryPhone(cart.deliveryPhone) || "Teléfono: —") +
+      "</span>";
+    const hint = document.createElement("p");
+    hint.className = "delivery-mis-datos__hint";
+    hint.innerHTML =
+      "<span class=\"delivery-mis-datos__ic\" aria-hidden=\"true\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\"><rect x=\"5\" y=\"11\" width=\"14\" height=\"10\" rx=\"2\"/><path d=\"M7 11V7a5 5 0 0 1 10 0v4\"/></svg></span> Por seguridad, ocultamos parte de tus datos";
+    const changeRow = document.createElement("div");
+    changeRow.className = "delivery-mis-datos__change-row";
+    const changeBtn = document.createElement("button");
+    changeBtn.type = "button";
+    changeBtn.className = "delivery-mis-datos__change";
+    changeBtn.innerHTML =
+      "<span class=\"delivery-mis-datos__change-ic\" aria-hidden=\"true\">↻</span> Cambiar";
+    changeBtn.addEventListener("click", function () {
+      checkoutDeliverySubstep = "contact";
+      renderCheckout(loadCart());
+    });
+    changeRow.appendChild(changeBtn);
+    misInner.appendChild(rowName);
+    misInner.appendChild(rowPhone);
+    misInner.appendChild(hint);
+    misInner.appendChild(changeRow);
+    details.appendChild(misInner);
+    stack.appendChild(details);
+
+    const sec = document.createElement("section");
+    sec.className = "delivery-address-section";
+    const secTitle = document.createElement("h3");
+    secTitle.className = "delivery-address-section__title";
+    secTitle.textContent = "Dirección de entrega";
+    sec.appendChild(secTitle);
+
+    const list = document.createElement("div");
+    list.className = "delivery-address-list";
+    list.setAttribute("role", "radiogroup");
+    list.setAttribute("aria-label", "Direcciones guardadas");
+
+    const addrs = Array.isArray(cart.deliveryAddresses) ? cart.deliveryAddresses : [];
+    let selectedId = String(cart.deliveryAddressId || "");
+    if (selectedId && !addrs.some(function (a) { return a && a.id === selectedId; })) {
+      selectedId = "";
+    }
+    if (!selectedId && addrs.length) {
+      selectedId = addrs[0].id;
+    }
+
+    function paintSelection() {
+      list.querySelectorAll(".delivery-address-row").forEach(function (row) {
+        const id = row.getAttribute("data-addr-id");
+        const on = id === selectedId;
+        row.classList.toggle("is-selected", on);
+        row.setAttribute("aria-checked", on ? "true" : "false");
+      });
+    }
+
+    addrs.forEach(function (addr) {
+      if (!addr || !addr.id) return;
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "delivery-address-row";
+      row.setAttribute("data-addr-id", addr.id);
+      row.setAttribute("role", "radio");
+      const pin = document.createElement("span");
+      pin.className = "delivery-address-row__pin";
+      pin.setAttribute("aria-hidden", "true");
+      pin.innerHTML =
+        "<svg width=\"20\" height=\"20\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\"><path d=\"M12 21s7-4.5 7-11a7 7 0 1 0-14 0c0 6.5 7 11 7 11z\"/><circle cx=\"12\" cy=\"10\" r=\"2.5\"/></svg>";
+      const lab = document.createElement("span");
+      lab.className = "delivery-address-row__text";
+      lab.textContent = formatDeliveryAddressLabel(addr);
+      const rad = document.createElement("span");
+      rad.className = "delivery-address-row__radio";
+      rad.setAttribute("aria-hidden", "true");
+      row.appendChild(pin);
+      row.appendChild(lab);
+      row.appendChild(rad);
+      row.addEventListener("click", function () {
+        selectedId = addr.id;
+        paintSelection();
+      });
+      list.appendChild(row);
+    });
+
+    if (!addrs.length) {
+      const empty = document.createElement("p");
+      empty.className = "delivery-address-empty";
+      empty.textContent = "Aún no tienes direcciones. Agrega una con el botón de abajo.";
+      list.appendChild(empty);
+    }
+
+    sec.appendChild(list);
+    paintSelection();
+
+    const newBtn = document.createElement("button");
+    newBtn.type = "button";
+    newBtn.className = "delivery-new-address";
+    newBtn.innerHTML =
+      "<span class=\"delivery-new-address__plus\" aria-hidden=\"true\">+</span> Nueva dirección";
+    newBtn.addEventListener("click", function () {
+      checkoutDeliverySubstep = "addressForm";
+      renderCheckout(loadCart());
+    });
+    sec.appendChild(newBtn);
+    stack.appendChild(sec);
+
+    const confirmWrap = document.createElement("div");
+    confirmWrap.className = "checkout-delivery-confirm-wrap";
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn delivery-contact-confirm";
+    btn.textContent = "Confirmar dirección";
+    btn.disabled = !selectedId;
+    btn.addEventListener("click", function () {
+      if (!selectedId) {
+        window.alert("Selecciona o agrega una dirección de entrega.");
+        return;
+      }
+      const c = loadCart();
+      c.deliveryAddressId = selectedId;
+      saveCart(c);
+      checkoutDeliverySubstep = "review";
+      renderCheckout(c);
+    });
+    confirmWrap.appendChild(btn);
+    stack.appendChild(confirmWrap);
+
+    body.appendChild(stack);
+    setDeliveryHeaderBackMeta();
+  }
+
+  function renderCheckoutDeliveryReview(body, cart) {
+    const selAddr = getSelectedDeliveryAddress(cart);
+    if (!selAddr) {
+      checkoutDeliverySubstep = "addresses";
+      renderCheckout(loadCart());
+      return;
+    }
+
+    body.innerHTML = "";
+    const root = document.createElement("div");
+    root.className = "delivery-review";
+
+    const account = document.createElement("details");
+    account.className = "delivery-account-card";
+    account.open = false;
+    const accSum = document.createElement("summary");
+    accSum.className = "delivery-account-card__summary";
+    const n = cartCount(cart);
+    const tot = cartTotal(cart);
+    const left = document.createElement("div");
+    left.className = "delivery-account-card__left";
+    const line1 = document.createElement("span");
+    line1.className = "delivery-account-card__products";
+    line1.textContent = n === 1 ? "1 producto" : String(n) + " productos";
+    const amount = document.createElement("span");
+    amount.className = "delivery-account-card__amount";
+    amount.textContent = formatCLP(tot);
+    left.appendChild(line1);
+    left.appendChild(amount);
+    const pill = document.createElement("span");
+    pill.className = "delivery-account-card__pill";
+    pill.innerHTML =
+      "Precio de entrega gratis<span class=\"delivery-account-card__pill-chev\" aria-hidden=\"true\"></span>";
+    accSum.appendChild(left);
+    accSum.appendChild(pill);
+    const accDetail = document.createElement("p");
+    accDetail.className = "delivery-account-card__detail";
+    accDetail.textContent = "Sin costo de envío en este pedido.";
+    account.appendChild(accSum);
+    account.appendChild(accDetail);
+    root.appendChild(account);
+
+    const details = document.createElement("details");
+    details.className = "delivery-mis-datos";
+    details.open = true;
+    const sum = document.createElement("summary");
+    sum.className = "delivery-mis-datos__summary";
+    sum.innerHTML =
+      "<span>Mis datos</span><span class=\"delivery-mis-datos__chev\" aria-hidden=\"true\"></span>";
+    details.appendChild(sum);
+
+    const misInner = document.createElement("div");
+    misInner.className = "delivery-mis-datos__inner";
+    const rowName = document.createElement("p");
+    rowName.className = "delivery-mis-datos__row";
+    rowName.innerHTML =
+      "<span class=\"delivery-mis-datos__ic\" aria-hidden=\"true\"><svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\"><path d=\"M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2\"/><circle cx=\"12\" cy=\"7\" r=\"4\"/></svg></span><span>" +
+      (maskDeliveryName(cart.deliveryName) || "Nombre: —") +
+      "</span>";
+    const rowPhone = document.createElement("p");
+    rowPhone.className = "delivery-mis-datos__row delivery-mis-datos__row--with-action";
+    const phoneSpan = document.createElement("span");
+    phoneSpan.className = "delivery-mis-datos__row-main";
+    phoneSpan.innerHTML =
+      "<span class=\"delivery-mis-datos__ic\" aria-hidden=\"true\"><svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\"><path d=\"M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.44 12.44 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.44 12.44 0 0 0 2.81.7A2 2 0 0 1 22 16.92z\"/></svg></span><span>" +
+      (maskDeliveryPhone(cart.deliveryPhone) || "Teléfono: —") +
+      "</span>";
+    const changeBtn = document.createElement("button");
+    changeBtn.type = "button";
+    changeBtn.className = "delivery-mis-datos__change delivery-mis-datos__change--inline";
+    changeBtn.innerHTML =
+      "<span class=\"delivery-mis-datos__change-ic\" aria-hidden=\"true\">↻</span> Cambiar";
+    changeBtn.addEventListener("click", function () {
+      checkoutDeliverySubstep = "addresses";
+      renderCheckout(loadCart());
+    });
+    rowPhone.appendChild(phoneSpan);
+    rowPhone.appendChild(changeBtn);
+
+    const rowAddr = document.createElement("p");
+    rowAddr.className = "delivery-mis-datos__row";
+    const addrIc = document.createElement("span");
+    addrIc.className = "delivery-mis-datos__ic";
+    addrIc.setAttribute("aria-hidden", "true");
+    addrIc.innerHTML =
+      "<svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\"><path d=\"M12 21s7-4.5 7-11a7 7 0 1 0-14 0c0 6.5 7 11 7 11z\"/><circle cx=\"12\" cy=\"10\" r=\"2.5\"/></svg>";
+    const addrTxt = document.createElement("span");
+    addrTxt.textContent = "Dirección: " + formatDeliveryAddressMisDatosLine(selAddr);
+    rowAddr.appendChild(addrIc);
+    rowAddr.appendChild(addrTxt);
+
+    const hint = document.createElement("p");
+    hint.className = "delivery-mis-datos__hint";
+    hint.innerHTML =
+      "<span class=\"delivery-mis-datos__ic\" aria-hidden=\"true\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\"><rect x=\"5\" y=\"11\" width=\"14\" height=\"10\" rx=\"2\"/><path d=\"M7 11V7a5 5 0 0 1 10 0v4\"/></svg></span> Por seguridad, ocultamos parte de tus datos";
+
+    misInner.appendChild(rowName);
+    misInner.appendChild(rowPhone);
+    misInner.appendChild(rowAddr);
+    misInner.appendChild(hint);
+    details.appendChild(misInner);
+    root.appendChild(details);
+
+    const commentWrap = document.createElement("div");
+    commentWrap.className = "delivery-review-field";
+    const commentLab = document.createElement("label");
+    commentLab.className = "delivery-review-field__label sr-only";
+    commentLab.setAttribute("for", "checkout-delivery-order-comment");
+    commentLab.textContent = "Comentario del pedido";
+    const commentInp = document.createElement("input");
+    commentInp.type = "text";
+    commentInp.id = "checkout-delivery-order-comment";
+    commentInp.className = "delivery-input delivery-input--boxed delivery-review-input";
+    commentInp.setAttribute("autocomplete", "off");
+    commentInp.placeholder = "Agregar comentario (opcional)";
+    commentInp.value = cart.deliveryOrderComment || "";
+    commentWrap.appendChild(commentLab);
+    commentWrap.appendChild(commentInp);
+    root.appendChild(commentWrap);
+
+    const couponBlock = document.createElement("div");
+    couponBlock.className = "delivery-coupon-block";
+    const coupHead = document.createElement("div");
+    coupHead.className = "delivery-coupon-block__head";
+    const coupTitle = document.createElement("span");
+    coupTitle.className = "delivery-coupon-block__title";
+    coupTitle.textContent = "Cupón";
+    const coupDetails = document.createElement("details");
+    coupDetails.className = "delivery-coupon-details";
+    const coupSum = document.createElement("summary");
+    coupSum.className = "delivery-coupon-details__summary";
+    coupSum.textContent = "Ver detalles";
+    const coupHelp = document.createElement("p");
+    coupHelp.className = "delivery-coupon-details__help";
+    coupHelp.textContent =
+      "Si tienes un código promocional, ingrésalo abajo. El descuento lo confirma el restaurante al coordinar el pedido.";
+    coupDetails.appendChild(coupSum);
+    coupDetails.appendChild(coupHelp);
+    coupHead.appendChild(coupTitle);
+    coupHead.appendChild(coupDetails);
+    couponBlock.appendChild(coupHead);
+    const coupInp = document.createElement("input");
+    coupInp.type = "text";
+    coupInp.id = "checkout-delivery-coupon";
+    coupInp.className = "delivery-input delivery-input--boxed delivery-review-input";
+    coupInp.placeholder = "Ingresar cupón";
+    coupInp.setAttribute("autocomplete", "off");
+    coupInp.value = cart.deliveryCoupon || "";
+    couponBlock.appendChild(coupInp);
+    root.appendChild(couponBlock);
+
+    const pay = document.createElement("div");
+    pay.className = "delivery-payment-box";
+    const payHead = document.createElement("div");
+    payHead.className = "delivery-payment-box__head";
+    const payTitle = document.createElement("span");
+    payTitle.className = "delivery-payment-box__title";
+    payTitle.textContent = "Método de pago";
+    const paySub = document.createElement("span");
+    paySub.className = "delivery-payment-box__sub";
+    paySub.textContent = "El pago se coordina luego";
+    payHead.appendChild(payTitle);
+    payHead.appendChild(paySub);
+    const paySel = document.createElement("select");
+    paySel.id = "checkout-delivery-payment";
+    paySel.className = "delivery-payment-select";
+    paySel.setAttribute("aria-label", "Método de pago");
+    ["Efectivo", "Pago Online", "Transferencia"].forEach(function (opt) {
+      const o = document.createElement("option");
+      o.value = opt;
+      o.textContent = opt;
+      if ((cart.deliveryPaymentMethod || "Efectivo") === opt) o.selected = true;
+      paySel.appendChild(o);
+    });
+    pay.appendChild(payHead);
+    pay.appendChild(paySel);
+    root.appendChild(pay);
+
+    const confirmWrap = document.createElement("div");
+    confirmWrap.className = "checkout-delivery-confirm-wrap delivery-review__cta";
+    const pedir = document.createElement("button");
+    pedir.type = "button";
+    pedir.className = "btn delivery-contact-confirm";
+    pedir.textContent = "Pedir (" + formatCLP(tot) + ")";
+    pedir.addEventListener("click", function () {
+      const c = loadCart();
+      c.deliveryOrderComment = String(commentInp.value || "").trim();
+      c.deliveryCoupon = String(coupInp.value || "").trim();
+      c.deliveryPaymentMethod = String(paySel.value || "Efectivo");
+      saveCart(c);
+      openWhatsappWithOrder(c);
+    });
+    confirmWrap.appendChild(pedir);
+    root.appendChild(confirmWrap);
+
+    body.appendChild(root);
+    setDeliveryHeaderBackMeta();
+  }
+
+  function renderCheckoutAddressForm(body, cart) {
+    body.innerHTML = "";
+    const stack = document.createElement("div");
+    stack.className = "checkout-delivery-stack delivery-address-form-stack";
+
+    function field(id, labelText, optional, ph) {
+      const wrap = document.createElement("div");
+      wrap.className = "delivery-field";
+      const lab = document.createElement("label");
+      lab.className = "delivery-field__label";
+      lab.setAttribute("for", id);
+      lab.appendChild(document.createTextNode(labelText));
+      if (optional) {
+        const opt = document.createElement("span");
+        opt.className = "delivery-field__optional";
+        opt.textContent = " (opcional)";
+        lab.appendChild(opt);
+      }
+      const inp = document.createElement("input");
+      inp.type = "text";
+      inp.id = id;
+      inp.className = "delivery-input delivery-input--boxed";
+      inp.placeholder = ph || "Escriba aquí";
+      wrap.appendChild(lab);
+      wrap.appendChild(inp);
+      return { wrap: wrap, inp: inp };
+    }
+
+    const fStreet = field("checkout-addr-street", "Calle/Avenida", false, "Escriba aquí");
+    const fNum = field("checkout-addr-number", "Número", false, "Escriba aquí");
+    const fComp = field("checkout-addr-complement", "Complemento", true, "Escriba aquí");
+    const fRef = field("checkout-addr-reference", "Referencia", true, "Escriba aquí");
+    stack.appendChild(fStreet.wrap);
+    stack.appendChild(fNum.wrap);
+    stack.appendChild(fComp.wrap);
+    stack.appendChild(fRef.wrap);
+
+    const confirmWrap = document.createElement("div");
+    confirmWrap.className = "checkout-delivery-confirm-wrap";
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btn delivery-contact-confirm";
+    btn.textContent = "Confirmar dirección";
+    btn.addEventListener("click", function () {
+      const street = String(fStreet.inp.value || "").trim();
+      const number = String(fNum.inp.value || "").trim();
+      const complement = String(fComp.inp.value || "").trim();
+      const reference = String(fRef.inp.value || "").trim();
+      if (street.length < 2) {
+        window.alert("Ingresa calle o avenida.");
+        fStreet.inp.focus();
+        return;
+      }
+      if (!number.length) {
+        window.alert("Ingresa el número.");
+        fNum.inp.focus();
+        return;
+      }
+      const c = loadCart();
+      if (!Array.isArray(c.deliveryAddresses)) c.deliveryAddresses = [];
+      const na = normalizeDeliveryAddress({
+        id: newDeliveryAddressId(),
+        street: street,
+        number: number,
+        complement: complement,
+        reference: reference,
+      });
+      c.deliveryAddresses.push(na);
+      c.deliveryAddressId = na.id;
+      saveCart(c);
+      checkoutDeliverySubstep = "addresses";
+      renderCheckout(c);
+    });
+    confirmWrap.appendChild(btn);
+    stack.appendChild(confirmWrap);
+
+    body.appendChild(stack);
+    setDeliveryHeaderBackMeta();
+    setTimeout(function () {
+      fStreet.inp.focus();
     }, 60);
   }
 
@@ -1144,6 +1784,7 @@
 
     if (!cart.items.length) {
       checkoutDeliveryStep = false;
+      checkoutDeliverySubstep = "contact";
       setCheckoutChromeMode(false);
       const p = document.createElement("p");
       p.className = "menu-empty";
@@ -1155,11 +1796,23 @@
 
     if (checkoutDeliveryStep && !isDeliveryCart(cart)) {
       checkoutDeliveryStep = false;
+      checkoutDeliverySubstep = "contact";
     }
 
     if (checkoutDeliveryStep && isDeliveryCart(cart)) {
       setCheckoutChromeMode(true);
-      renderCheckoutDeliveryForm(body, cart);
+      if (checkoutDeliverySubstep === "contact") {
+        renderCheckoutDeliveryForm(body, cart);
+      } else if (checkoutDeliverySubstep === "addresses") {
+        renderCheckoutAddressPicker(body, cart);
+      } else if (checkoutDeliverySubstep === "addressForm") {
+        renderCheckoutAddressForm(body, cart);
+      } else if (checkoutDeliverySubstep === "review") {
+        renderCheckoutDeliveryReview(body, cart);
+      } else {
+        checkoutDeliverySubstep = "contact";
+        renderCheckoutDeliveryForm(body, cart);
+      }
       return;
     }
 
@@ -1268,9 +1921,13 @@
       const c = loadCart();
       c.serviceType = t;
       checkoutDeliveryStep = false;
+      checkoutDeliverySubstep = "contact";
       if (!isDeliveryCart(c)) {
-        c.deliveryName = "";
-        c.deliveryPhone = "";
+        c.deliveryAddresses = [];
+        c.deliveryAddressId = "";
+        c.deliveryOrderComment = "";
+        c.deliveryCoupon = "";
+        c.deliveryPaymentMethod = "Efectivo";
       }
       saveCart(c);
       renderCheckout(c);
@@ -1283,6 +1940,7 @@
       c.serviceType = "A domicilio";
       saveCart(c);
       checkoutDeliveryStep = true;
+      checkoutDeliverySubstep = hasValidDeliveryContact(c) ? "addresses" : "contact";
       renderCheckout(c);
     });
     choices.appendChild(b1);
@@ -1291,9 +1949,18 @@
 
     const note = document.createElement("p");
     note.className = "checkout-note";
-    note.textContent = cart.serviceType
+    let noteLine = cart.serviceType
       ? "Seleccionado: " + cart.serviceType
       : "Selecciona Para llevar o A domicilio.";
+    if (isDeliveryCart(cart) && cart.deliveryAddressId && Array.isArray(cart.deliveryAddresses)) {
+      const sel = cart.deliveryAddresses.find(function (a) {
+        return a && a.id === cart.deliveryAddressId;
+      });
+      if (sel) {
+        noteLine += " · Entregar en: " + formatDeliveryAddressLabel(sel);
+      }
+    }
+    note.textContent = noteLine;
     body.appendChild(note);
   }
 
@@ -1508,8 +2175,7 @@
           if (checkoutDeliveryStep) {
             const cm = document.getElementById("checkout-modal");
             if (cm && !cm.hidden) {
-              checkoutDeliveryStep = false;
-              renderCheckout(loadCart());
+              deliveryStepGoBack();
               e.preventDefault();
               return;
             }
@@ -1531,8 +2197,7 @@
         const checkoutDelBack = document.getElementById("checkout-delivery-back");
         if (checkoutDelBack) {
           checkoutDelBack.addEventListener("click", function () {
-            checkoutDeliveryStep = false;
-            renderCheckout(loadCart());
+            deliveryStepGoBack();
           });
         }
         const checkoutCloseDelivery = document.getElementById("checkout-modal-close-delivery");
